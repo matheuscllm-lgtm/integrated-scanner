@@ -1,0 +1,10 @@
+# resultados e logs locais (a entrega é a tabela no chat)
+outputs/
+
+# ambiente virtual Python
+.venv/
+
+# caches Python
+__pycache__/
+*.pyc
+.pytest_cache/
