@@ -116,7 +116,7 @@ run_integrated.py   orquestrador: subprocess por fonte + timeout + log por fonte
 normalize.py        leitores por fonte → schema unificado + heurística de valorização
 notorious.py        lista curada de Pokémon notórios + matcher por palavra inteira
 delivery.py         tabela markdown completa + xlsx de apoio + resumo por fonte
-tests/              15 testes (matcher + convenções de margem por fonte)
+tests/              26 testes (matcher, convenções de margem, status por fonte)
 outputs/            resultados e logs (não versionado)
 ```
 

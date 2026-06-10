@@ -13,20 +13,20 @@ def test_comc_phase2_status_zero_deals():
     # "indisponível" (bug do run 2026-06-10: COMC rodou 7,7 min e saiu
     # rotulado "nenhum output encontrado")
     st, det = _comc_phase2_status(
-        [], {"recent": {"count": 0, "generated_utc": "20260610T184632Z"}})
+        {"recent": {"count": 0, "generated_utc": "20260610T184632Z"}})
     assert st == "ok (0 deals)"
     assert "recent: 0 deals" in det
     assert "20260610T184632Z" in det
 
 
 def test_comc_phase2_status_no_output():
-    st, det = _comc_phase2_status([], {})
+    st, det = _comc_phase2_status({})
     assert st == "indisponível"
     assert det == "nenhum output encontrado"
 
 
 def test_comc_phase2_status_both_eras_zero():
-    st, det = _comc_phase2_status([], {
+    st, det = _comc_phase2_status({
         "recent": {"count": 0, "generated_utc": "A"},
         "vintage": {"count": 0, "generated_utc": "B"},
     })
@@ -37,7 +37,7 @@ def test_comc_phase2_status_both_eras_zero():
 def test_comc_phase2_status_sidecar_with_deals_but_csv_sumido():
     # sidecar diz count>0 mas o CSV não foi achado → algo errado de verdade;
     # NÃO pode virar "ok (0 deals)"
-    st, det = _comc_phase2_status([], {"recent": {"count": 5, "generated_utc": "X"}})
+    st, det = _comc_phase2_status({"recent": {"count": 5, "generated_utc": "X"}})
     assert st == "indisponível"
 
 

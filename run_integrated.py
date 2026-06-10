@@ -89,7 +89,7 @@ def _staleness_warning(mtime: float, now: float | None = None,
             f"considere re-coletar (collect_liga_live.py)")
 
 
-def _comc_phase2_status(paths: list, summaries: dict[str, dict]) -> tuple[str, str]:
+def _comc_phase2_status(summaries: dict[str, dict]) -> tuple[str, str]:
     """Status honesto do COMC quando não há CSV com deals pra ler.
 
     O sidecar results/comc_deals_{era}_latest.json com count==0 prova que o
@@ -314,7 +314,7 @@ def main() -> int:
                 else:
                     # CSV vazio ≠ scan ausente: o sidecar JSON com count==0
                     # prova run bem-sucedido sem deals ("ok (0 deals)").
-                    st, det = _comc_phase2_status(paths, comc_run_summaries())
+                    st, det = _comc_phase2_status(comc_run_summaries())
                     if status_obj.status in ("falhou", "timeout"):
                         # scan DESTE run falhou — não mascarar; só anexa.
                         status_obj.detail = (f"{status_obj.detail}; {det}"
