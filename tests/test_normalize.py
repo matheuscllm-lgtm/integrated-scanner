@@ -6,7 +6,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from normalize import (UNIFIED_COLUMNS, classify_chase_tier, comc_row_to_deal,
+from normalize import (UNIFIED_COLUMNS, classify_chase_tier, clean_myp_edition,
+                       comc_row_to_deal, comc_run_summaries,
                        compute_valorization, ct_row_to_deal, gross_margin_pct,
                        liga_row_to_deal, myp_row_to_deal)
 
@@ -122,3 +123,60 @@ def test_valorization_heuristic_components():
     # 45 (TOP) + 10 (sem data) + 20 (>$100) = 75
     assert score == 75
     assert "sem série histórica" in note
+
+
+def test_clean_myp_edition_splits_pt_en():
+    # casos-alvo reais (catálogo MYP concatena PT+EN sem separador)
+    assert clean_myp_edition(
+        "Escarlate e Violeta: Máscaras do CrepúsculoSV06: Twilight Masquerade"
+    ) == "SV06: Twilight Masquerade"
+    assert clean_myp_edition(
+        "Escarlate e Violeta: 151Scarlet & Violet—151"
+    ) == "Scarlet & Violet—151"
+    # título EN-only fica intacto (não há boundary PT→EN)
+    assert clean_myp_edition("ME: Ascended Heroes") == "ME: Ascended Heroes"
+    assert clean_myp_edition("Surging Sparks") == "Surging Sparks"
+    # vintage/promo não mapeado fica intacto (cosmético residual aceitável)
+    assert clean_myp_edition("Coleção Clássica") == "Coleção Clássica"
+    assert clean_myp_edition("") == ""
+
+
+def test_myp_set_name_uses_clean_edition():
+    row = dict(MYP_ROW, Edition=(
+        "Escarlate e Violeta: Máscaras do CrepúsculoSV06: Twilight Masquerade"))
+    d = myp_row_to_deal(row, FX)
+    assert d.set_name == "SV06: Twilight Masquerade"
+
+
+def test_myp_link_tcg_from_column():
+    url = "https://prices.pokemontcg.io/tcgplayer/sv7-152"
+    row = dict(MYP_ROW, **{"TCG URL": url})
+    d = myp_row_to_deal(row, FX)
+    assert d.link_tcg == url
+
+
+def test_myp_link_tcg_fallback_search():
+    # XLSX antigo (pré-v5.11.2) sem a coluna → busca por nome SEM o (NNN/MMM)
+    d = myp_row_to_deal(MYP_ROW, FX)
+    assert "tcgplayer.com/search" in d.link_tcg
+    assert "Mega+Gengar+ex" in d.link_tcg
+    assert "269" not in d.link_tcg
+    # coluna presente mas vazia (NaN do pandas) → também cai no fallback
+    d2 = myp_row_to_deal(dict(MYP_ROW, **{"TCG URL": float("nan")}), FX)
+    assert "tcgplayer.com/search" in d2.link_tcg
+
+
+def test_comc_run_summaries(tmp_path):
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "comc_deals_recent_latest.json").write_text(
+        '{"era": "recent", "generated_utc": "20260610T184632Z", "count": 0, "deals": []}',
+        encoding="utf-8")
+    (results / "comc_deals_vintage_latest.json").write_text(
+        "{json quebrado", encoding="utf-8")  # ilegível → era ignorada
+    s = comc_run_summaries(tmp_path)
+    assert set(s.keys()) == {"recent"}
+    assert s["recent"]["count"] == 0
+    assert s["recent"]["generated_utc"] == "20260610T184632Z"
+    # diretório sem nenhum sidecar → dict vazio
+    assert comc_run_summaries(tmp_path / "nao_existe") == {}
