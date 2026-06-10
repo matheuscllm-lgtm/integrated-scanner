@@ -517,9 +517,17 @@ def read_comc(path: Path, fx_global: float) -> list[Deal]:
 
 
 def read_liga(path: Path, fx_global: float) -> list[Deal]:
+    """Lê o report da Liga mantendo SÓ as linhas status=="approved".
+
+    O pipeline da Liga já aplica o piso R$50 + margem 30% e marca cada linha
+    ("approved"/"rejected"). Ignorar o status deixava carta de centavos
+    entrar na tabela unificada com margem absurda (e2e 2026-06-10: Applin
+    R$0,08 a "487%" — rejected na fonte, exibida aqui). Piso é invariante
+    POR FONTE; o integrado respeita o veredito dela."""
     import json
     rows = json.loads(path.read_text(encoding="utf-8"))
-    return [liga_row_to_deal(row, fx_global) for row in rows]
+    return [liga_row_to_deal(row, fx_global) for row in rows
+            if row.get("status") == "approved"]
 
 
 def infer_fx_from_ct(repo: Path = REPOS["ct"]) -> Optional[float]:

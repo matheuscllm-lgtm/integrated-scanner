@@ -166,6 +166,23 @@ def test_myp_link_tcg_fallback_search():
     assert "tcgplayer.com/search" in d2.link_tcg
 
 
+def test_read_liga_keeps_only_approved(tmp_path):
+    # e2e 2026-06-10: piso R$50 da Liga marca carta de centavos como
+    # "rejected"; o integrado deve respeitar o veredito da fonte.
+    import json
+    from normalize import read_liga
+    rows = [
+        dict(LIGA_ROW, status="approved"),
+        dict(LIGA_ROW, card_name="Applin", price_liga_brl=0.08,
+             price_tcg_brl=0.47, status="rejected"),
+        dict(LIGA_ROW, card_name="Sem Status"),  # sem campo → fora (conservador)
+    ]
+    p = tmp_path / "report_x.json"
+    p.write_text(json.dumps(rows), encoding="utf-8")
+    deals = read_liga(p, 5.2)
+    assert [d.carta for d in deals] == ["Charizard ex"]
+
+
 def test_comc_run_summaries(tmp_path):
     results = tmp_path / "results"
     results.mkdir()
