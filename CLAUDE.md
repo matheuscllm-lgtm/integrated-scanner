@@ -31,9 +31,12 @@ cd C:\Users\mathe\integrated-scanner
 .venv\Scripts\python.exe run_integrated.py --profile quick
 ```
 
-- `--profile quick` (padrão): só os principais sets de Scarlet & Violet
+- `--profile quick` (padrão): os principais sets de Scarlet & Violet
   (Prismatic, Surging Sparks, Journey Together, Stellar Crown, Twilight
-  Masquerade, Shrouded Fable, Paldean Fates, 151). ~1h-2h no total.
+  Masquerade, Shrouded Fable, Paldean Fates, 151) e, no MYP, também os da
+  era Mega Evolution — Ascended Heroes, Perfect Order e Chaos Rising
+  (pedido do operador 2026-06-10: são os que mais têm bons hits no MYP).
+  ~1h-2h no total.
 - `--profile full`: o catálogo inteiro de cada fonte. Leva HORAS (o MYP
   sozinho varre ~348 edições a ~7 min cada). Use com a tarde livre.
 - `--sources myp,ct,comc,liga`: escolhe quais fontes rodar (padrão: todas).

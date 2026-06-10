@@ -59,11 +59,14 @@ VENV_PY = {  # python.exe do venv de CADA repo (caixa-preta: usamos o deles)
     "liga": REPOS["liga"] / ".venv" / "Scripts" / "python.exe",
 }
 
-# Sets "principais SV" por fonte (profile quick). Cada fonte nomeia diferente:
+# Sets "principais SV + ME" por fonte (profile quick). Cada fonte nomeia diferente:
 CT_QUICK_SETS = ["pre", "ssp", "jtg", "scr", "twm", "sfa", "paf", "mew"]
 # MYP --editions é SUBSTRING do título da edição (não alias):
+# 2026-06-10 (operador): + Ascended Heroes, Perfect Order e Chaos Rising (era
+# Mega Evolution) — são os sets que mais comumente têm bons hits no MYP.
 MYP_QUICK_EDITIONS = ["Prismatic", "Surging", "Journey", "Stellar",
-                      "Twilight", "Shrouded", "Paldean Fates", "151"]
+                      "Twilight", "Shrouded", "Paldean Fates", "151",
+                      "Ascended Heroes", "Perfect Order", "Chaos Rising"]
 
 # Timeouts (segundos) por fonte × profile — generosos mas finitos.
 TIMEOUTS = {
