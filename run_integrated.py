@@ -21,10 +21,10 @@ Notas operacionais:
     do Chrome de verdade (necessário pra furar o Cloudflare) — não feche.
   - Falha/timeout de uma fonte NÃO derruba as outras: cada fonte tem timeout
     e log próprios (outputs/logs/), e o status honesto vai no cabeçalho.
-  - Liga: o coletor real é STUB (não coleta o site ao vivo). Só roda se
-    existir data/liga_offers.csv REAL no repo da Liga; senão é pulada com
-    status "indisponível — coletor pendente". Reports antigos da Liga vêm de
-    dados MOCK (demonstração) e NUNCA entram na tabela.
+  - Liga: roda a partir do data/liga_offers.csv do repo da Liga, gerado
+    pelo coletor AO VIVO de lá (src/collect_liga_live.py, headful — rodar
+    antes do integrado). Sem o CSV é pulada com aviso. Reports antigos da
+    Liga vêm de dados MOCK (demonstração) e NUNCA entram na tabela.
 """
 from __future__ import annotations
 
@@ -156,12 +156,19 @@ def scan_comc(profile: str, stamp: str, timeout_s: int) -> tuple[str, str, float
 
 
 def scan_liga(profile: str, stamp: str, timeout_s: int) -> tuple[str, str, float, Path | None]:
-    """Liga só roda com CSV manual REAL (coletor ao vivo é stub)."""
+    """Liga roda a partir do data/liga_offers.csv do repo da Liga.
+
+    O CSV vem do coletor AO VIVO de lá (headful; rodar ANTES do integrado):
+      cd C:\\Users\\mathe\\liga-pokemon-scanner
+      .venv\\Scripts\\python.exe src\\collect_liga_live.py --sets PRE --no-report
+    Não disparamos a coleta daqui de propósito: ela é headful/lenta e o
+    operador escolhe os sets; o integrado só consome o CSV mais recente."""
     repo = REPOS["liga"]
     csv_real = repo / "data" / "liga_offers.csv"
     if not csv_real.exists():
         return ("indisponível",
-                "coletor real pendente (stub); forneça data/liga_offers.csv p/ incluir",
+                "sem data/liga_offers.csv; rode o coletor ao vivo no repo da Liga "
+                "(src/collect_liga_live.py --sets ... --no-report) e re-rode",
                 0.0, None)
     cmd = [str(VENV_PY["liga"]), str(repo / "src" / "main.py")]
     status, detail, dur = _run_step(
