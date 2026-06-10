@@ -81,7 +81,7 @@ que passou no corte de 30% do scanner original é perdido na unificação.
 | **MYP** | funcionante | mypcards.com vs TCGPlayer, preços em R$. Não informa estoque da oferta (coluna Qtd = "—"). Raridade pouco confiável (SIR pode vir como "Comum" — fica em nota). |
 | **CardTrader** | funcionante | Europa vs TCGPlayer. Já emite Chase Tier e score de Valorização nativos. Validação de preço LIVE nos top 30. |
 | **COMC** | funcionante, HEADFUL | Abre uma janela do Chrome de verdade (~8 min por era) — **não feche a janela**. Tese value-buy: o mercado COMC↔TCG é o mesmo, então deals ≥30% são raros (honesto: pode vir 0). |
-| **Liga** | **indisponível ao vivo** | O coletor real é um stub — a Liga bloqueia robôs (erro 403) e o coletor de produção nunca foi construído. O pipeline funciona com CSV manual: se você criar `data/liga_offers.csv` no repo da Liga (modelo: `liga_offers.example.csv`), o integrado roda a Liga com preços reais do pokemontcg.io. Sem o CSV, a fonte é pulada com aviso. **Os reports antigos da Liga vêm de dados MOCK (demonstração) e nunca entram na tabela.** |
+| **Liga** | funcionante, HEADFUL (2 passos) | Desde 2026-06-10 a Liga tem coletor AO VIVO no repo dela (patchright + Chrome headful, passa o Cloudflare). **Passo 1**: rodar a coleta no repo da Liga — `cd C:\Users\mathe\liga-pokemon-scanner; .venv\Scripts\python.exe src\collect_liga_live.py --sets PRE SSP --no-report` (abre janela do Chrome — não feche; gera `data/liga_offers.csv`). **Passo 2**: o integrado detecta o CSV e roda a Liga sozinho (preços reais do pokemontcg.io). Sem o CSV, a fonte é pulada com aviso. **Os reports antigos da Liga vêm de dados MOCK (demonstração) e nunca entram na tabela.** |
 
 ## Colunas da tabela unificada
 
