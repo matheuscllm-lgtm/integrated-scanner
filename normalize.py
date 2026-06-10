@@ -110,6 +110,16 @@ def _num(value: Any, default: float = 0.0) -> float:
     return f
 
 
+def _clean_str(value: Any) -> str:
+    """Célula → str, com NaN do pandas (célula vazia) virando ""."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and math.isnan(value):
+        return ""
+    s = str(value).strip()
+    return "" if s.lower() == "nan" else s
+
+
 def gross_margin_pct(ref_brl: float, compra_brl: float) -> float:
     """Margem bruta unificada: (revenda − compra)/compra ×100. Zero taxas."""
     if compra_brl <= 0:
@@ -277,6 +287,35 @@ def ct_row_to_deal(row: dict[str, Any], fx_global: float) -> Deal:
 
 _MYP_NUMBER_RE = re.compile(r"\((\d+[a-zA-Z]?)\s*/\s*\d+\)\s*$")
 
+# O catálogo do MYP concatena nome PT + nome EN da edição SEM separador
+# ("Escarlate e Violeta: Máscaras do CrepúsculoSV06: Twilight Masquerade").
+# Pra display unificado mantemos o lado EN (consistente com CT/COMC).
+# Boundary conservador: só divide quando o lado direito começa com um
+# prefixo de era EN conhecido — título EN-only ou vintage fica intacto.
+# NÃO mexer no Edition cru do MYP (é load-bearing no filtro --editions e no
+# mapa de setcodes de lá); isto é só cosmético da tabela unificada.
+_MYP_EDITION_EN_BOUNDARY = re.compile(
+    r"(?<=[a-záéíóúâêôãõàçü0-9!?.)])"
+    r"(?=(?:SV\d|ME[\d:]|SM\d|SWSH\d|XY\d"
+    r"|Scarlet & Violet|Sword & Shield|Sun & Moon|Mega Evolution|Pokémon GO))")
+
+_TCG_SEARCH_BASE = "https://www.tcgplayer.com/search/pokemon/product?productLineName=pokemon&q="
+
+
+def clean_myp_edition(title: str) -> str:
+    """Lado EN do título de edição bilíngue concatenado do MYP (display)."""
+    title = title or ""
+    m = _MYP_EDITION_EN_BOUNDARY.search(title)
+    return title[m.start():].strip() if m else title
+
+
+def _myp_tcg_search_fallback(card_name: str) -> str:
+    """URL de busca TCGplayer pelo nome (mesma lógica do tcg_search_url do
+    MYP) — fallback pra XLSX antigo sem a coluna 'TCG URL' (pré-v5.11.2)."""
+    from urllib.parse import quote_plus
+    base = re.sub(r"\s*\([^)]*\)\s*$", "", card_name or "").strip()
+    return _TCG_SEARCH_BASE + quote_plus(base) if base else ""
+
 
 def myp_row_to_deal(row: dict[str, Any], fx_global: float) -> Deal:
     """MYP results/*.xlsx (15 colunas, v5.11). Preços já em BRL; 'Margin %'
@@ -296,7 +335,7 @@ def myp_row_to_deal(row: dict[str, Any], fx_global: float) -> Deal:
     deal = Deal(
         fonte="MYP",
         carta=carta,
-        set_name=str(_col(row, "Edition") or ""),
+        set_name=clean_myp_edition(str(_col(row, "Edition") or "")),
         numero=numero,
         raridade=rarity,
         chase_tier=classify_chase_tier(rarity),
@@ -310,7 +349,9 @@ def myp_row_to_deal(row: dict[str, Any], fx_global: float) -> Deal:
         qtd=None,  # MYP não informa estoque da oferta mais barata
         valorizacao=score,
         link_oferta=str(_col(row, "URL") or ""),
-        link_tcg="",  # output MYP não traz link TCG
+        # v5.11.2 do MYP exporta "TCG URL" (texto plano); XLSX antigo não
+        # tem a coluna → fallback de busca por nome (sem duplicar setcodes).
+        link_tcg=_clean_str(_col(row, "TCG URL")) or _myp_tcg_search_fallback(carta),
     )
     deal.notas.append(note)
     deal.notas.append("raridade MYP pouco confiável (SIR/HR podem vir 'Comum')")
@@ -435,6 +476,28 @@ def latest_comc_outputs(repo: Path = REPOS["comc"]) -> list[Path]:
     return out
 
 
+def comc_run_summaries(repo: Path = REPOS["comc"]) -> dict[str, dict]:
+    """Sidecar JSON por era (results/comc_deals_{era}_latest.json).
+
+    É a MARCA de run bem-sucedido do COMC: um scan que terminou com 0 deals
+    gera CSV de 0 bytes (que latest_comc_outputs descarta) mas o JSON traz
+    {'era', 'generated_utc', 'count': 0, ...}. Distingue "rodou e achou 0"
+    de "nunca rodou/sem output". Tolerante a JSON ilegível (era ignorada)."""
+    import json
+    out: dict[str, dict] = {}
+    for era in ("recent", "vintage"):
+        p = repo / "results" / f"comc_deals_{era}_latest.json"
+        if not p.exists():
+            continue
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            continue
+        if isinstance(data, dict) and "count" in data:
+            out[era] = data
+    return out
+
+
 def read_ct(path: Path, fx_global: float) -> list[Deal]:
     import pandas as pd
     df = pd.read_excel(path)
@@ -454,9 +517,17 @@ def read_comc(path: Path, fx_global: float) -> list[Deal]:
 
 
 def read_liga(path: Path, fx_global: float) -> list[Deal]:
+    """Lê o report da Liga mantendo SÓ as linhas status=="approved".
+
+    O pipeline da Liga já aplica o piso R$50 + margem 30% e marca cada linha
+    ("approved"/"rejected"). Ignorar o status deixava carta de centavos
+    entrar na tabela unificada com margem absurda (e2e 2026-06-10: Applin
+    R$0,08 a "487%" — rejected na fonte, exibida aqui). Piso é invariante
+    POR FONTE; o integrado respeita o veredito dela."""
     import json
     rows = json.loads(path.read_text(encoding="utf-8"))
-    return [liga_row_to_deal(row, fx_global) for row in rows]
+    return [liga_row_to_deal(row, fx_global) for row in rows
+            if row.get("status") == "approved"]
 
 
 def infer_fx_from_ct(repo: Path = REPOS["ct"]) -> Optional[float]:

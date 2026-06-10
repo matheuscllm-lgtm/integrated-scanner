@@ -19,7 +19,10 @@
   "headless", invisível). O COMC precisa disso pra passar pelo Cloudflare
   (o "porteiro" anti-robô do site).
 - **Stub**: código "de mentirinha" que ocupa o lugar de uma função real ainda
-  não construída. O coletor ao vivo da Liga é um stub (detalhe abaixo).
+  não construída. (A Liga JÁ NÃO usa stub: desde 2026-06-10 tem coletor ao
+  vivo de verdade — ver a tabela de status abaixo.)
+- **Sidecar**: arquivo pequeno que acompanha o resultado principal com
+  metadados sobre ele (ex.: o JSON do COMC que diz quantos deals o scan achou).
 
 ## Como rodar ("rodar o scanner integrado")
 
@@ -78,10 +81,10 @@ que passou no corte de 30% do scanner original é perdido na unificação.
 
 | Fonte | Estado | Observações |
 |---|---|---|
-| **MYP** | funcionante | mypcards.com vs TCGPlayer, preços em R$. Não informa estoque da oferta (coluna Qtd = "—"). Raridade pouco confiável (SIR pode vir como "Comum" — fica em nota). |
+| **MYP** | funcionante | mypcards.com vs TCGPlayer, preços em R$. Não informa estoque da oferta (coluna Qtd = "—"). Raridade pouco confiável (SIR pode vir como "Comum" — fica em nota). **É o gargalo do quick (~71 min)**: defina `POKEMONTCG_API_KEY` (key grátis em dev.pokemontcg.io; `$env:POKEMONTCG_API_KEY="..."` ou User env var) — elimina o throttle e ativa o sleep adaptativo do MYP v5.11.2 (estimativa: quick cai pra ~45-55 min). Link TCG por linha vem da coluna `TCG URL` do XLSX (v5.11.2+); XLSX antigo cai num link de busca por nome. |
 | **CardTrader** | funcionante | Europa vs TCGPlayer. Já emite Chase Tier e score de Valorização nativos. Validação de preço LIVE nos top 30. |
-| **COMC** | funcionante, HEADFUL | Abre uma janela do Chrome de verdade (~8 min por era) — **não feche a janela**. Tese value-buy: o mercado COMC↔TCG é o mesmo, então deals ≥30% são raros (honesto: pode vir 0). |
-| **Liga** | funcionante, HEADFUL (2 passos) | Desde 2026-06-10 a Liga tem coletor AO VIVO no repo dela (patchright + Chrome headful, passa o Cloudflare). **Passo 1**: rodar a coleta no repo da Liga — `cd C:\Users\mathe\liga-pokemon-scanner; .venv\Scripts\python.exe src\collect_liga_live.py --sets PRE SSP --no-report` (abre janela do Chrome — não feche; gera `data/liga_offers.csv`). **Passo 2**: o integrado detecta o CSV e roda a Liga sozinho (preços reais do pokemontcg.io). Sem o CSV, a fonte é pulada com aviso. **Os reports antigos da Liga vêm de dados MOCK (demonstração) e nunca entram na tabela.** |
+| **COMC** | funcionante, HEADFUL | Abre uma janela do Chrome de verdade (~8 min por era) — **não feche a janela**. Tese value-buy: o mercado COMC↔TCG é o mesmo, então deals ≥30% são raros (honesto: pode vir 0). Quando o scan termina com 0 deals, o status no resumo é **"ok (0 deals)"** (lido do sidecar JSON `comc_deals_{era}_latest.json`, campo `count`); **"indisponível"** é reservado pra quando NÃO há output nenhum (nem CSV nem sidecar). |
+| **Liga** | funcionante, HEADFUL (2 passos) | Desde 2026-06-10 a Liga tem coletor AO VIVO no repo dela (patchright + Chrome headful, passa o Cloudflare). **Passo 1**: rodar a coleta no repo da Liga — `cd C:\Users\mathe\liga-pokemon-scanner; .venv\Scripts\python.exe src\collect_liga_live.py --sets PRE SSP --no-report` (abre janela do Chrome — não feche; gera `data/liga_offers.csv`). **Passo 2**: o integrado detecta o CSV e roda a Liga sozinho (preços reais do pokemontcg.io). Sem o CSV, a fonte é pulada com aviso. Se o CSV tiver **mais de 48h**, o resumo mostra um aviso de "CSV velho — considere re-coletar" (aviso, não bloqueio: preços da Liga mudam diário). **Os reports antigos da Liga vêm de dados MOCK (demonstração) e nunca entram na tabela.** |
 
 ## Colunas da tabela unificada
 
@@ -113,7 +116,7 @@ run_integrated.py   orquestrador: subprocess por fonte + timeout + log por fonte
 normalize.py        leitores por fonte → schema unificado + heurística de valorização
 notorious.py        lista curada de Pokémon notórios + matcher por palavra inteira
 delivery.py         tabela markdown completa + xlsx de apoio + resumo por fonte
-tests/              15 testes (matcher + convenções de margem por fonte)
+tests/              26 testes (matcher, convenções de margem, status por fonte)
 outputs/            resultados e logs (não versionado)
 ```
 
@@ -132,4 +135,4 @@ Rodar os testes:
 - MYP: `C:\Users\mathe\myp-arbitrage-scanner\` (v5.11+)
 - CardTrader: `C:\Users\mathe\card-trader-scanner\` (v2.13+)
 - COMC: `C:\Users\mathe\scanner-comc\` (ler HANDOFF.md §0 antes de mexer)
-- Liga: `C:\Users\mathe\liga-pokemon-scanner\` (coletor real pendente)
+- Liga: `C:\Users\mathe\liga-pokemon-scanner\` (coletor ao vivo desde 2026-06-10)

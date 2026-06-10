@@ -33,6 +33,7 @@ import json
 import subprocess
 import sys
 import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -41,7 +42,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-from normalize import (REPOS, FX_FALLBACK, infer_fx_from_ct,
+from normalize import (REPOS, FX_FALLBACK, comc_run_summaries, infer_fx_from_ct,
                        latest_ct_output, latest_comc_outputs, latest_myp_output,
                        read_comc, read_ct, read_liga, read_myp)
 from delivery import (MIN_MARGIN_PCT_DEFAULT, SourceStatus, build_markdown,
@@ -71,6 +72,40 @@ TIMEOUTS = {
     "comc": {"quick": 30 * 60, "full": 75 * 60},     # ~8 min/era + margem
     "liga": {"quick": 15 * 60, "full": 30 * 60},
 }
+
+# Idade máxima (horas) do data/liga_offers.csv antes de avisar o operador —
+# a coleta da Liga é manual/headful; preços mudam diário, então acima disso
+# a margem calculada deixa de ser confiável. AVISO, nunca bloqueio.
+LIGA_CSV_MAX_AGE_H = 48.0
+
+
+def _staleness_warning(mtime: float, now: float | None = None,
+                       max_hours: float = LIGA_CSV_MAX_AGE_H) -> str | None:
+    """Texto de aviso se o arquivo passou de max_hours; None se fresco."""
+    age_h = ((now if now is not None else time.time()) - mtime) / 3600.0
+    if age_h <= max_hours:
+        return None
+    return (f"⚠️ CSV da Liga com {age_h:.0f}h (> {max_hours:.0f}h) — "
+            f"considere re-coletar (collect_liga_live.py)")
+
+
+def _comc_phase2_status(summaries: dict[str, dict]) -> tuple[str, str]:
+    """Status honesto do COMC quando não há CSV com deals pra ler.
+
+    O sidecar results/comc_deals_{era}_latest.json com count==0 prova que o
+    scan RODOU e terminou sem deals (CSV de 0 bytes é descartado pelo
+    latest_comc_outputs) — isso é "ok (0 deals)", não "indisponível"."""
+    zero = [(era, s) for era, s in summaries.items() if s.get("count") == 0]
+    if zero:
+        detail = "; ".join(
+            f"{era}: 0 deals (run {s.get('generated_utc', '?')})" for era, s in zero)
+        return "ok (0 deals)", detail
+    return "indisponível", "nenhum output encontrado"
+
+
+def _mark_no_output(status_obj) -> None:
+    status_obj.status = "indisponível"
+    status_obj.detail = "nenhum output encontrado"
 
 
 def _run_step(name: str, cmd: list[str], cwd: Path, timeout_s: int,
@@ -170,10 +205,13 @@ def scan_liga(profile: str, stamp: str, timeout_s: int) -> tuple[str, str, float
                 "sem data/liga_offers.csv; rode o coletor ao vivo no repo da Liga "
                 "(src/collect_liga_live.py --sets ... --no-report) e re-rode",
                 0.0, None)
+    stale = _staleness_warning(csv_real.stat().st_mtime)
     cmd = [str(VENV_PY["liga"]), str(repo / "src" / "main.py")]
     status, detail, dur = _run_step(
         "liga", cmd, repo, timeout_s, LOG_DIR / f"liga_{stamp}.log",
         env_extra={"LIGA_OFFERS_SOURCE": "csv", "LIGA_TCG_SOURCE": "pokemontcg"})
+    if stale:  # aviso de CSV velho — nunca bloqueia o run
+        detail = f"{stale}; {detail}" if detail else stale
     reports = sorted((repo / "reports").glob("report_*.json"),
                      key=lambda p: p.stat().st_mtime)
     out = reports[-1] if status == "ok" and reports else None
@@ -264,8 +302,7 @@ def main() -> int:
                     if status_obj.status.startswith("pulado"):
                         status_obj.status = "ok (output existente)"
                 else:
-                    status_obj.status = "indisponível"
-                    status_obj.detail = "nenhum output encontrado"
+                    _mark_no_output(status_obj)
             elif src == "comc":
                 paths = produced.get(src) or latest_comc_outputs()
                 if paths:
@@ -275,8 +312,16 @@ def main() -> int:
                     if status_obj.status.startswith("pulado"):
                         status_obj.status = "ok (output existente)"
                 else:
-                    status_obj.status = "indisponível"
-                    status_obj.detail = "nenhum output encontrado"
+                    # CSV vazio ≠ scan ausente: o sidecar JSON com count==0
+                    # prova run bem-sucedido sem deals ("ok (0 deals)").
+                    st, det = _comc_phase2_status(comc_run_summaries())
+                    if status_obj.status in ("falhou", "timeout"):
+                        # scan DESTE run falhou — não mascarar; só anexa.
+                        status_obj.detail = (f"{status_obj.detail}; {det}"
+                                             if status_obj.detail else det)
+                    else:
+                        status_obj.status = st
+                        status_obj.detail = det
             elif src == "liga":
                 path = produced.get(src)
                 if not path and args.liga_report:
@@ -284,11 +329,15 @@ def main() -> int:
                 if path and Path(path).exists():
                     src_deals = read_liga(Path(path), fx_global)
                     status_obj.output_path = str(path)
-                    status_obj.status = "ok"
+                    if not status_obj.detail:        # preserva aviso staleness
+                        status_obj.status = "ok"
                 elif status_obj.status.startswith("pulado"):
                     status_obj.status = "indisponível"
-                    status_obj.detail = ("coletor real é stub; reports existentes são MOCK "
-                                         "(não entram); use --liga-report c/ report de CSV real")
+                    status_obj.detail = (
+                        "sem report de CSV real neste run; rode o coletor ao vivo "
+                        "no repo da Liga (src/collect_liga_live.py --sets ...) e o "
+                        "integrado SEM --skip-scan, ou aponte --liga-report pra um "
+                        "report gerado de CSV real (reports MOCK não entram)")
             status_obj.deals_raw = len(src_deals)
             kept = filter_deals(src_deals, args.min_margin, args.notorious_only)
             status_obj.deals_kept = len(kept)
@@ -296,6 +345,7 @@ def main() -> int:
         except Exception as exc:  # uma fonte quebrada não derruba a entrega
             status_obj.status = "falhou (normalização)"
             status_obj.detail = f"{type(exc).__name__}: {exc}"
+            traceback.print_exc(file=sys.stderr)
 
     # ── fase 3: entrega ─────────────────────────────────────────────────
     final = filter_deals(deals, args.min_margin, args.notorious_only)
