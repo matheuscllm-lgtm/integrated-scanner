@@ -52,6 +52,24 @@ def _fmt(value) -> str:
     return str(value)
 
 
+# Coluna Links combinada (oferta + TCG numa célula só) — modelo de tabela do MYP,
+# padrão cross-scanner (operador 2026-06-19). O XLSX de apoio mantém as 2 colunas
+# de URL cruas separadas (write_xlsx usa UNIFIED_COLUMNS); só a ENTREGA combina.
+_LINK_COLS = ("Link oferta", "Link TCG")
+
+
+def _md_links_cell(link_oferta, link_tcg) -> str:
+    """'[oferta](url) · [TCG](url)' — só inclui o que existir (http)."""
+    parts = []
+    of = "" if link_oferta is None else str(link_oferta).strip()
+    tc = "" if link_tcg is None else str(link_tcg).strip()
+    if of.startswith("http"):
+        parts.append(f"[oferta]({of})")
+    if tc.startswith("http"):
+        parts.append(f"[TCG]({tc})")
+    return " · ".join(parts) if parts else "—"
+
+
 def build_markdown(deals: list[Deal],
                    statuses: list[SourceStatus],
                    fx_global: float,
@@ -86,11 +104,14 @@ def build_markdown(deals: list[Deal],
         lines.append("_Nenhum deal passou o corte._")
         return "\n".join(lines) + "\n"
 
-    lines.append("| " + " | ".join(UNIFIED_COLUMNS) + " |")
-    lines.append("|" + "---|" * len(UNIFIED_COLUMNS))
+    # Header: colunas não-link + 1 coluna `Links` combinada no fim (modelo MYP).
+    display_cols = [c for c in UNIFIED_COLUMNS if c not in _LINK_COLS] + ["Links"]
+    lines.append("| " + " | ".join(display_cols) + " |")
+    lines.append("|" + "---|" * len(display_cols))
     for d in deals:
         row = d.to_row()
-        cells = [_md_escape(_fmt(row[c])) for c in UNIFIED_COLUMNS]
+        cells = [_md_escape(_fmt(row[c])) for c in UNIFIED_COLUMNS if c not in _LINK_COLS]
+        cells.append(_md_links_cell(row.get("Link oferta"), row.get("Link TCG")))
         lines.append("| " + " | ".join(cells) + " |")
     lines.append("")
     lines.append("_Valorização = heurística 0-100 (raridade + idade do set + "

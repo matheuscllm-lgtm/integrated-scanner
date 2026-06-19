@@ -95,6 +95,13 @@ Fonte | Carta | Set | Nº | Raridade | Chase Tier | Notório | Compra (R$) |
 Compra (US$) | FX | Ref TCG (R$) | Ref TCG (US$) | Margem bruta % | Lucro (R$) |
 Qtd | Valorização (0-100) | Notas | Link oferta | Link TCG
 
+> **Entrega no chat vs. XLSX:** na **tabela markdown de entrega**, as duas
+> últimas colunas (`Link oferta` + `Link TCG`) viram **uma coluna `Links` só**,
+> no formato `[oferta](url) · [TCG](url)` — modelo de tabela do MYP, padrão
+> cross-scanner (operador 2026-06-19). O **XLSX de apoio mantém as 2 colunas de
+> URL cruas separadas** (pra reimportar). Não monte a tabela à mão: a entrega
+> sai do `delivery.build_markdown`.
+
 - **Notório**: ⭐ + nome quando a carta é de um Pokémon da lista curada
   (`notorious.py`, ~55 ícones com racional comentado). O flag NÃO infla o
   score de valorização — é informação separada, explícita.
