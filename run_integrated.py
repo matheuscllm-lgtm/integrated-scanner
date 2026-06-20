@@ -56,12 +56,24 @@ HERE = Path(__file__).resolve().parent
 OUT_DIR = HERE / "outputs"
 LOG_DIR = OUT_DIR / "logs"
 
-VENV_PY = {  # python.exe do venv de CADA repo (caixa-preta: usamos o deles)
-    "ct": REPOS["ct"] / ".venv" / "Scripts" / "python.exe",
-    "myp": REPOS["myp"] / ".venv" / "Scripts" / "python.exe",
-    "comc": REPOS["comc"] / ".venv" / "Scripts" / "python.exe",
-    "liga": REPOS["liga"] / ".venv" / "Scripts" / "python.exe",
-}
+def _venv_python(repo: Path) -> str:
+    """Interpreter Python a usar pra rodar o scanner de `repo`.
+
+    Preferência: venv do PRÓPRIO repo (caixa-preta, como o operador roda no
+    Windows) — layout Windows `.venv\\Scripts\\python.exe` OU POSIX
+    `.venv/bin/python`. Se o repo não tem venv (ex.: sessão Claude Code na
+    nuvem, onde os deps são instalados no interpreter do container), cai pro
+    `sys.executable` que está rodando o orquestrador."""
+    win = repo / ".venv" / "Scripts" / "python.exe"
+    posix = repo / ".venv" / "bin" / "python"
+    if win.exists():
+        return str(win)
+    if posix.exists():
+        return str(posix)
+    return sys.executable
+
+
+VENV_PY = {src: _venv_python(repo) for src, repo in REPOS.items()}
 
 # A varredura coordenada por set vive em set_registry.py: um código canônico
 # (PRE, SSP, ...) traduzido pra convenção de cada fonte. O escopo é resolvido UMA
