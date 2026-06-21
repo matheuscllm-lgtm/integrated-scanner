@@ -60,6 +60,7 @@ app = FastAPI(
 # Registro de jobs de scan em memória (o processo da API). Reinício = limpa.
 _JOBS: dict[str, dict] = {}
 _JOBS_LOCK = threading.Lock()
+_MAX_JOBS = 200  # cap do histórico em memória (evita vazamento em servidor longo)
 
 
 def _now() -> str:
@@ -191,13 +192,26 @@ class ScanRequest(BaseModel):
                                description="fontes a rodar (headful comc/liga exigem opt-in)")
     min_margin: float = Field(30.0, description="corte de margem bruta (percent)")
     collect_liga: bool = Field(False, description="dispara coleta Liga headful (cuidado)")
+    allow_comc: bool = Field(False, description="permite COMC (HEADFUL — abre Chrome); opt-in obrigatório")
     notorious_only: bool = Field(False)
+
+
+def _prune_jobs(keep: int = _MAX_JOBS) -> None:
+    """Cap simples no histórico de jobs em memória (evita vazamento). Mantém os
+    `keep` mais recentes por ordem de criação; preserva jobs ainda ativos."""
+    with _JOBS_LOCK:
+        if len(_JOBS) <= keep:
+            return
+        items = list(_JOBS.items())  # ordem de inserção (criação)
+        for jid, j in items[:-keep]:
+            if j.get("status") not in ("queued", "running"):
+                _JOBS.pop(jid, None)
 
 
 def _run_scan_job(job_id: str, req: ScanRequest) -> None:
     cmd = [sys.executable, str(HERE / "run_integrated.py"),
            "--sets", req.sets,
-           "--sources", ",".join(req.sources),
+           "--sources", ",".join(s.lower() for s in req.sources),
            "--min-margin", str(req.min_margin)]
     if req.collect_liga:
         cmd.append("--collect-liga")
@@ -225,23 +239,38 @@ def _run_scan_job(job_id: str, req: ScanRequest) -> None:
 @app.post("/scan", status_code=202)
 def scan(req: ScanRequest) -> dict:
     """Dispara um scan coordenado em BACKGROUND (alimenta o store). Valida o
-    escopo e as fontes antes; headful (comc/liga) exige opt-in explícito."""
-    bad = [s for s in req.sources if s.lower() not in VALID_SOURCES]
+    escopo e as fontes antes. COMC (headful) exige `allow_comc=true`; coleta
+    Liga ao vivo exige `collect_liga=true`. Rejeita 409 se já houver scan ativo
+    (nunca 2 runs concorrentes — corromperia o store / colidiria no state-dir)."""
+    srcs = [s.lower() for s in req.sources]
+    bad = [s for s in srcs if s not in VALID_SOURCES]
     if bad:
         raise HTTPException(400, f"fontes inválidas: {bad} (válidas: {sorted(VALID_SOURCES)})")
-    headful = [s for s in req.sources if s.lower() in HEADFUL_SOURCES]
-    if headful and not req.collect_liga and "liga" in headful:
-        # Liga sem collect_liga só lê CSV existente — permitido; COMC headful sempre.
-        pass
+    # COMC é SEMPRE headful (abre Chrome) → opt-in obrigatório (allow_comc).
+    if "comc" in srcs and not req.allow_comc:
+        raise HTTPException(
+            400, "COMC é headful (abre Chrome) — passe allow_comc=true pra confirmar "
+                 "(rodar headful sem supervisão pode travar).")
     try:  # valida o escopo cedo (erro claro em vez de subprocess que falha)
         resolve_scope(req.sets)
     except UnknownSetError as exc:
         raise HTTPException(400, str(exc))
-
+    # GUARD de concorrência (ATÔMICO, sob 1 lock pra não ter TOCTOU): 2 scans
+    # juntos = 2 run_integrated no mesmo OUT_DIR (corrompe o store) + colidem no
+    # state-dir de cada scanner-fonte (regra do operador: nunca 2 no mesmo
+    # state-dir). Rejeita 409 enquanto houver job ativo; cria o job na mesma
+    # seção crítica antes de soltar a thread.
     job_id = uuid.uuid4().hex[:12]
     with _JOBS_LOCK:
+        active = next((jid for jid, j in _JOBS.items()
+                       if j.get("status") in ("queued", "running")), None)
+        if active:
+            raise HTTPException(
+                409, f"já há um scan em andamento (job {active}); aguarde concluir "
+                     f"(GET /scan/{active}) antes de disparar outro.")
         _JOBS[job_id] = {"job_id": job_id, "status": "queued", "created": _now(),
                          "sets": req.sets, "sources": req.sources}
+    _prune_jobs()
     threading.Thread(target=_run_scan_job, args=(job_id, req), daemon=True).start()
     return {"job_id": job_id, "status": "queued",
             "note": "scan rodando em background; consulte GET /scan/{job_id}. "

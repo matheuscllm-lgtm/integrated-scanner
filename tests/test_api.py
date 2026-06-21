@@ -154,6 +154,7 @@ def test_scan_valid_returns_job(client, monkeypatch):
     monkeypatch.setattr(api, "_run_scan_job", lambda *a, **k: None)
     monkeypatch.setattr(api.threading, "Thread",
                         lambda *a, **k: type("T", (), {"start": lambda self: None})())
+    api._JOBS.clear()  # isolamento: o no-op deixa job "queued" → limpa antes
     r = client.post("/scan", json={"sets": "PRE,SSP", "sources": ["myp", "ct"]})
     assert r.status_code == 202
     job_id = r.json()["job_id"]
@@ -162,3 +163,30 @@ def test_scan_valid_returns_job(client, monkeypatch):
 
 def test_scan_status_unknown_404(client):
     assert client.get("/scan/deadbeef").status_code == 404
+
+
+def test_scan_comc_requires_optin(client):
+    # COMC é headful → sem allow_comc deve dar 400
+    r = client.post("/scan", json={"sets": "PRE", "sources": ["comc"]})
+    assert r.status_code == 400 and "comc" in r.json()["detail"].lower()
+
+
+def test_scan_comc_with_optin_ok(client, monkeypatch):
+    monkeypatch.setattr(api, "_run_scan_job", lambda *a, **k: None)
+    monkeypatch.setattr(api.threading, "Thread",
+                        lambda *a, **k: type("T", (), {"start": lambda self: None})())
+    api._JOBS.clear()
+    r = client.post("/scan", json={"sets": "PRE", "sources": ["comc"], "allow_comc": True})
+    assert r.status_code == 202
+
+
+def test_scan_concurrent_returns_409(client, monkeypatch):
+    # não roda scan real; injeta um job "ativo" e confirma o 409
+    monkeypatch.setattr(api, "_run_scan_job", lambda *a, **k: None)
+    monkeypatch.setattr(api.threading, "Thread",
+                        lambda *a, **k: type("T", (), {"start": lambda self: None})())
+    api._JOBS.clear()
+    api._JOBS["busy123"] = {"job_id": "busy123", "status": "running"}
+    r = client.post("/scan", json={"sets": "PRE", "sources": ["myp"]})
+    assert r.status_code == 409 and "busy123" in r.json()["detail"]
+    api._JOBS.clear()

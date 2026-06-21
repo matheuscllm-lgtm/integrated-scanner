@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,7 +59,9 @@ def save_store(store: dict, path: Path = STORE_PATH,
     Falha de gravação NUNCA deve derrubar o run — chame em try/except no caller."""
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(store, ensure_ascii=False, indent=2)
-    tmp = path.with_suffix(".json.tmp")
+    # tmp ÚNICO por escrita (pid+uuid): se 2 runs gravarem juntos, cada um tem o
+    # seu tmp — sem corromper o tmp do outro antes do os.replace atômico.
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
     tmp.write_text(payload, encoding="utf-8")
     os.replace(tmp, path)  # atômico no mesmo filesystem
     if keep_history and store.get("stamp"):
