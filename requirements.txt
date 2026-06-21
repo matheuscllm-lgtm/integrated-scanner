@@ -1,0 +1,11 @@
+# Dependências de runtime do scanner integrado.
+#
+# O integrado é um ORQUESTRADOR: roda os 4 scanners como subprocess (cada um no
+# PRÓPRIO venv) e só LÊ os outputs deles pra unificar. Por isso a lista aqui é
+# mínima — não reinstala as deps das fontes (cloudscraper, patchright, etc.).
+#
+# pandas: lê os outputs das fontes (xlsx do CT/MYP, csv do COMC) e escreve o
+#         xlsx de apoio da tabela unificada (normalize.py / delivery.py).
+# openpyxl: engine de .xlsx que o pandas usa pra ler/gravar planilha.
+pandas>=2.0
+openpyxl>=3.1.0
