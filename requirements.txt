@@ -1,0 +1,12 @@
+# Scanner integrado de singles — dependências.
+# (Os 4 scanners-fonte têm os PRÓPRIOS venvs; o integrado os chama como
+#  subprocess, então NÃO precisa das libs deles aqui — só do que ele mesmo usa.)
+
+# Leitura/escrita dos XLSX de cada fonte + tabela unificada de apoio.
+pandas>=2.0
+openpyxl>=3.1        # engine xlsx do pandas (read/write)
+
+# Camada API HTTP (APIs expostas E alimentadas) — api.py / api_store.py.
+fastapi>=0.110
+uvicorn[standard]>=0.27
+httpx>=0.27          # cliente usado pelo TestClient do FastAPI (e smoke da API)
