@@ -33,6 +33,7 @@ DECISÕES DE DESIGN (documentadas porque as fontes divergem):
 from __future__ import annotations
 
 import math
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -460,11 +461,41 @@ def liga_row_to_deal(row: dict[str, Any], fx_global: float) -> Deal:
 # FILE READERS — descobrem e leem o output mais recente de cada fonte.
 # ══════════════════════════════════════════════════════════════════════
 
+def _resolve_base() -> Path:
+    """Onde moram os repos das fontes (irmãos do integrated-scanner).
+
+    - Máquina Windows do operador: `C:\\Users\\mathe` (layout canônico).
+    - Sessão Claude Code na nuvem / outra máquina: os repos são clonados como
+      IRMÃOS deste repo (ex.: /home/user/integrated-scanner + /home/user/myp-...).
+    Override explícito via env `SCANNERS_BASE`. Preserva o comportamento
+    Windows (o caminho existe lá) e funciona no container sem editar nada."""
+    env = os.environ.get("SCANNERS_BASE")
+    if env:
+        return Path(env)
+    win = Path(r"C:\Users\mathe")
+    if win.exists():
+        return win
+    return Path(__file__).resolve().parent.parent
+
+
+def _resolve_repo(base: Path, *names: str) -> Path:
+    """Primeiro nome de pasta que existe sob `base`; senão o primeiro (default).
+
+    `names` aceita aliases porque o nome local do repo pode divergir do nome no
+    GitHub (ex.: Liga = `liga-pokemon-scanner` local vs `liga-cards-scanner` clone)."""
+    for n in names:
+        cand = base / n
+        if cand.exists():
+            return cand
+    return base / names[0]
+
+
+_BASE = _resolve_base()
 REPOS = {
-    "ct": Path(r"C:\Users\mathe\card-trader-scanner"),
-    "myp": Path(r"C:\Users\mathe\myp-arbitrage-scanner"),
-    "comc": Path(r"C:\Users\mathe\scanner-comc"),
-    "liga": Path(r"C:\Users\mathe\liga-pokemon-scanner"),
+    "ct": _resolve_repo(_BASE, "card-trader-scanner"),
+    "myp": _resolve_repo(_BASE, "myp-arbitrage-scanner"),
+    "comc": _resolve_repo(_BASE, "scanner-comc"),
+    "liga": _resolve_repo(_BASE, "liga-pokemon-scanner", "liga-cards-scanner"),
 }
 
 
