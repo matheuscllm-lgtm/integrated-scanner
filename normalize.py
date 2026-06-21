@@ -330,6 +330,15 @@ def myp_row_to_deal(row: dict[str, Any], fx_global: float) -> Deal:
     ref_brl = _num(_col(row, "TCG Player (R$)"))
     fx = fx_global
     rarity = str(_col(row, "Rarity") or "")
+    # Honestidade (espelha MYP v5.14.3): o preço TCG do MYP pode ser REAL
+    # (pokemontcg.io) ou FALLBACK (`.estat-tcg`, uma estimativa do próprio MYP).
+    # O fallback às vezes mapeia a carta errada e infla o "preço TCG" → margem
+    # ILUSÓRIA (ex.: Darumaka R$2867 vs R$60). Fonte canônica = coluna
+    # "TCG Source"; XLSX antigo (pré-v5.14) infere por "TCG US$" (que só o preço
+    # real preenche). Um fallback tem de ir FLAGADO, nunca silencioso.
+    _tcg_src = str(_col(row, "TCG Source") or "").strip()
+    tcg_is_real = ("pokemontcg" in _tcg_src.lower()) if _tcg_src \
+        else _num(_col(row, "TCG US$")) > 0
     ref_usd = ref_brl / fx if fx else 0.0
     score, note = compute_valorization(rarity, None, ref_usd)
     deal = Deal(
@@ -353,6 +362,13 @@ def myp_row_to_deal(row: dict[str, Any], fx_global: float) -> Deal:
         # tem a coluna → fallback de busca por nome (sem duplicar setcodes).
         link_tcg=_clean_str(_col(row, "TCG URL")) or _myp_tcg_search_fallback(carta),
     )
+    if not tcg_is_real:
+        # Nota em PRIMEIRO lugar (insert(0)) — é a ressalva mais importante:
+        # a margem desta linha vem de um preço ESTIMADO, pode ser ilusória.
+        deal.notas.insert(0, "⚠️ MARGEM NÃO-CONFIÁVEL: preço TCG é FALLBACK "
+                             "(`.estat-tcg`, estimativa do MYP — NÃO é o preço real "
+                             "do TCGplayer); pode estar inflado → validar no Link TCG "
+                             "ou re-rodar o MYP local (myp_enrich.py) antes de operar")
     deal.notas.append(note)
     deal.notas.append("raridade MYP pouco confiável (SIR/HR podem vir 'Comum')")
     sellers = _num(_col(row, "NM Sellers"))
