@@ -166,6 +166,37 @@ def test_myp_link_tcg_fallback_search():
     assert "tcgplayer.com/search" in d2.link_tcg
 
 
+def _has_fallback_note(deal):
+    return any("MARGEM NÃO-CONFIÁVEL" in n and "FALLBACK" in n for n in deal.notas)
+
+
+def test_myp_real_price_no_fallback_note():
+    # Preço REAL (TCG Source = pokemontcg.io) → SEM nota de margem não-confiável.
+    row = dict(MYP_ROW, **{"TCG Source": "real (pokemontcg.io)", "TCG US$": 86.0})
+    d = myp_row_to_deal(row, FX)
+    assert not _has_fallback_note(d), f"deal real não devia ter nota de fallback: {d.notas}"
+
+
+def test_myp_fallback_price_gets_untrustworthy_note_first():
+    # Preço FALLBACK (.estat-tcg) → nota de MARGEM NÃO-CONFIÁVEL, e em PRIMEIRO
+    # lugar (é a ressalva mais importante: a margem pode ser ilusória — Darumaka).
+    row = dict(MYP_ROW, **{"TCG Source": "fallback (.estat-tcg)", "TCG US$": float("nan"),
+                           "TCG Player (R$)": 2867.0, "MYP EN NM (R$)": 60.0})
+    d = myp_row_to_deal(row, FX)
+    assert _has_fallback_note(d), f"deal fallback devia ter nota de margem não-confiável: {d.notas}"
+    assert "MARGEM NÃO-CONFIÁVEL" in d.notas[0], \
+        f"a nota de fallback devia ser a PRIMEIRA: {d.notas}"
+
+
+def test_myp_fallback_inference_old_xlsx():
+    # XLSX antigo SEM 'TCG Source': infere por 'TCG US$'. Com USD → real (sem nota);
+    # sem USD → tratado como fallback (flag conservador/honesto).
+    real_old = dict(MYP_ROW, **{"TCG US$": 30.0})   # tem USD, sem TCG Source
+    assert not _has_fallback_note(myp_row_to_deal(real_old, FX))
+    fb_old = dict(MYP_ROW)  # nem TCG Source nem TCG US$ → desconhecido → flag
+    assert _has_fallback_note(myp_row_to_deal(fb_old, FX))
+
+
 def test_read_liga_keeps_only_approved(tmp_path):
     # e2e 2026-06-10: piso R$50 da Liga marca carta de centavos como
     # "rejected"; o integrado deve respeitar o veredito da fonte.
