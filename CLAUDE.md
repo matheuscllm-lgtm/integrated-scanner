@@ -101,6 +101,39 @@ status honesto — nunca silencioso, nunca erro.
 A entrega é a **tabela markdown impressa no terminal/chat** (todos os deals,
 ordenados por margem). O `.md` e o `.xlsx` em `outputs/` são só apoio local.
 
+## 🔀 Mesma carta em ≥2 fontes — preço lado a lado (`cross_source.py`)
+
+> **O que isto resolve, em uma frase:** antes, a MESMA carta (ex.: Umbreon ex
+> 161/131 de Prismatic) aparecia como até 4 linhas SOLTAS na tabela — uma por
+> fonte — espalhadas por margem. Você não via de relance "essa carta está mais
+> barata em qual fonte?". Agora, **logo depois** da tabela completa, há uma
+> seção que junta essas linhas numa só, com **o preço de cada fonte lado a
+> lado** (⬅ marca a mais barata) — pra escolher onde comprar.
+
+A seção é **ADITIVA**: não substitui nem reordena a tabela plana (a regra do
+operador continua sendo mostrar TODOS os deals). Ela só DESTACA as cartas que
+apareceram como deal (≥ corte) em **2 ou mais fontes**.
+
+**Como o casamento é feito (e por que é conservador):**
+
+- **Âncora forte = set canônico + número de coleção.** Cada fonte escreve o set
+  na sua convenção; o `cross_source.py` reverte pro código canônico via
+  `set_registry.py` (o caminho inverso do `--sets`). Dentro de um set, o número
+  de coleção é ~único → mesma `(set, número)` = mesma carta, alta confiança.
+- **Número normalizado** entre convenções: `173/165` = `173` = `013`→`13`;
+  prefixo de letra preservado (`TG12`, variantes `a/b`).
+- **Liga não exporta número** no report → só casa por **(set + nome)**. Isso é
+  mais fraco (duas raridades do mesmo Pokémon no mesmo set podem colidir) → sai
+  **sempre marcado `validar`**. Idem quando o número casa mas o nome do Pokémon
+  diverge entre fontes (mapeamento suspeito).
+- **Nunca chuta:** set que não resolve com segurança, ou carta numa fonte só,
+  **não entra** na seção (fica só na tabela plana). Sem fuzzy de nome (lição do
+  ASI-Evolve: alias deduzido por LLM alucina) — só igualdade normalizada.
+- **Honestidade dura:** a seção compara só cartas que JÁ são deal ≥ corte em cada
+  fonte. Um preço menor PORÉM abaixo do corte noutra fonte **não** aparece — está
+  dito no cabeçalho da seção. O integrado **não decide compra**: ranqueia (pela
+  margem da compra mais barata), põe o preço lado a lado e flagea `validar`.
+
 ## ⚠️ Armadilha nº 1: convenções de threshold OPOSTAS
 
 Cada scanner inventou a própria convenção, e elas são INCOMPATÍVEIS:
@@ -175,10 +208,11 @@ não existe coluna "COMPRAR" e o score vem sempre com a nota de limitação.
 ```
 run_integrated.py   orquestrador: escopo coordenado + subprocess por fonte + timeout + log
 set_registry.py     registro canônico de sets + tradutores p/ convenção de cada fonte
+cross_source.py     casa a MESMA carta entre fontes (set canônico + número) p/ preço lado-a-lado
 normalize.py        leitores por fonte → schema unificado + heurística de valorização
 notorious.py        lista curada de Pokémon notórios + matcher por palavra inteira
-delivery.py         tabela markdown completa + xlsx de apoio + resumo por fonte
-tests/              40 testes (registry/escopo, matcher, convenções de margem, status)
+delivery.py         tabela markdown completa + xlsx de apoio + resumo por fonte + seção cross-source
+tests/              62 testes (registry/escopo, cross-source, matcher, margem, status)
 outputs/            resultados e logs (não versionado)
 ```
 

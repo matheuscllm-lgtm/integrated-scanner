@@ -46,8 +46,10 @@ if hasattr(sys.stdout, "reconfigure"):
 from normalize import (REPOS, FX_FALLBACK, comc_run_summaries, infer_fx_from_ct,
                        latest_ct_output, latest_comc_outputs, latest_myp_output,
                        read_comc, read_ct, read_liga, read_myp)
-from delivery import (MIN_MARGIN_PCT_DEFAULT, SourceStatus, build_markdown,
+from delivery import (MIN_MARGIN_PCT_DEFAULT, SourceStatus,
+                      build_cross_source_markdown, build_markdown,
                       filter_deals, write_xlsx)
+from cross_source import group_cross_source
 from set_registry import (UnknownSetError, is_full, resolve_scope, to_comc,
                           to_ct_sets, to_liga_codes, to_liga_names,
                           to_myp_editions)
@@ -522,6 +524,10 @@ def main() -> int:
     final = filter_deals(deals, args.min_margin, args.notorious_only)
     md = build_markdown(final, statuses, fx_global, args.min_margin,
                         args.notorious_only)
+    # Seção ADITIVA: a mesma carta em ≥2 fontes, preço lado a lado (não substitui
+    # a tabela plana acima — regra do operador é mostrar TODOS os deals).
+    cross = group_cross_source(final)
+    md += "\n" + build_cross_source_markdown(cross, args.min_margin)
     md_path = OUT_DIR / f"integrated_{stamp}.md"
     md_path.write_text(md, encoding="utf-8")
     xlsx_path = OUT_DIR / f"integrated_{stamp}.xlsx"

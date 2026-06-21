@@ -120,6 +120,68 @@ def build_markdown(deals: list[Deal],
     return "\n".join(lines) + "\n"
 
 
+def build_cross_source_markdown(cards: list,
+                                min_margin_pct: float = MIN_MARGIN_PCT_DEFAULT) -> str:
+    """Seção 🔀 cross-source: a MESMA carta em ≥2 fontes, preço lado a lado.
+
+    `cards` = saída de cross_source.group_cross_source (lista de CrossSourceCard).
+    Aditiva à entrega: NÃO substitui a tabela plana (regra do operador: mostrar
+    TODOS os deals). Aqui só destacamos onde a mesma carta aparece em 2+ fontes,
+    pra ver onde comprar mais barato. Não decide compra; ranqueia e flagea."""
+    from cross_source import SOURCE_ORDER
+
+    lines: list[str] = ["## 🔀 Mesma carta em ≥2 fontes — preço lado a lado", ""]
+    if not cards:
+        lines.append("_Nenhuma carta passou o corte em 2+ fontes neste run "
+                     "(nada pra comparar lado a lado)._")
+        return "\n".join(lines) + "\n"
+
+    lines.append(
+        f"Cartas que passaram o corte (**margem ≥ {min_margin_pct:.0f}%**) em "
+        f"**2+ fontes**, com o preço de compra de cada fonte lado a lado (⬅ = mais "
+        f"barata). Casamento por **set canônico + número de coleção** (âncora "
+        f"forte); **`validar`** = casado por nome (fonte sem número, ex. Liga) ou "
+        f"nome divergente → confira a versão exata. Limitação honesta: compara só "
+        f"cartas que já são deal ≥ corte em cada fonte (um preço menor PORÉM abaixo "
+        f"do corte noutra fonte não aparece). A margem exibida é a da compra mais "
+        f"barata. O integrado não decide compra.")
+    lines.append("")
+
+    price_cols = [f"{s} R$" for s in SOURCE_ORDER]
+    header = (["#", "Carta", "Set", "Nº"] + price_cols
+              + ["Mais barata", "Ref TCG R$", "Margem %", "Flag", "Links"])
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "---|" * len(header))
+    for i, c in enumerate(cards, 1):
+        cheapest = c.cheapest_deal
+        cheap_src = c.cheapest_source
+        cells = [str(i), _md_escape(c.display_name or "—"),
+                 _md_escape(c.canonical_set), _md_escape(c.display_number or "—")]
+        for s in SOURCE_ORDER:
+            d = c.deals_by_source.get(s)
+            if d is None:
+                cells.append("—")
+            else:
+                mark = " ⬅" if s == cheap_src else ""
+                cells.append(f"{d.compra_brl:.2f}{mark}")
+        cells.append(f"{cheap_src} (R${cheapest.compra_brl:.2f})")
+        cells.append(f"{cheapest.ref_brl:.2f}" if cheapest.ref_brl else "—")
+        cells.append(f"{cheapest.margem_pct:.1f}")
+        cells.append("validar" if c.validar else "")
+        cells.append(_md_links_cell(cheapest.link_oferta, cheapest.link_tcg))
+        lines.append("| " + " | ".join(cells) + " |")
+    lines.append("")
+
+    flagged = [c for c in cards if c.validar]
+    if flagged:
+        det = "; ".join(
+            (f"{c.display_name} {c.display_number}".strip() + f" — {c.motivo}")
+            for c in flagged)
+        lines.append(f"**`validar`** (casamento a conferir manualmente): {det}")
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def write_xlsx(deals: list[Deal], path: Path) -> None:
     """xlsx local de APOIO (a entrega oficial é a tabela markdown no chat)."""
     import pandas as pd
