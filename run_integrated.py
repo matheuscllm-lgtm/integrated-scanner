@@ -29,6 +29,7 @@ Notas operacionais:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import subprocess
 import sys
@@ -47,6 +48,9 @@ from normalize import (REPOS, FX_FALLBACK, comc_run_summaries, infer_fx_from_ct,
                        read_comc, read_ct, read_liga, read_myp)
 from delivery import (MIN_MARGIN_PCT_DEFAULT, SourceStatus, build_markdown,
                       filter_deals, write_xlsx)
+from set_registry import (UnknownSetError, is_full, resolve_scope, to_comc,
+                          to_ct_sets, to_liga_codes, to_liga_names,
+                          to_myp_editions)
 
 HERE = Path(__file__).resolve().parent
 OUT_DIR = HERE / "outputs"
@@ -59,14 +63,11 @@ VENV_PY = {  # python.exe do venv de CADA repo (caixa-preta: usamos o deles)
     "liga": REPOS["liga"] / ".venv" / "Scripts" / "python.exe",
 }
 
-# Sets "principais SV + ME" por fonte (profile quick). Cada fonte nomeia diferente:
-CT_QUICK_SETS = ["pre", "ssp", "jtg", "scr", "twm", "sfa", "paf", "mew"]
-# MYP --editions é SUBSTRING do título da edição (não alias):
-# 2026-06-10 (operador): + Ascended Heroes, Perfect Order e Chaos Rising (era
-# Mega Evolution) — são os sets que mais comumente têm bons hits no MYP.
-MYP_QUICK_EDITIONS = ["Prismatic", "Surging", "Journey", "Stellar",
-                      "Twilight", "Shrouded", "Paldean Fates", "151",
-                      "Ascended Heroes", "Perfect Order", "Chaos Rising"]
+# A varredura coordenada por set vive em set_registry.py: um código canônico
+# (PRE, SSP, ...) traduzido pra convenção de cada fonte. O escopo é resolvido UMA
+# vez em main() (profile "quick"/"full" OU lista livre --sets PRE,SSP) e passado
+# pra cada scan_*. As listas quick antigas (CT_QUICK_SETS / MYP_QUICK_EDITIONS)
+# viraram o profile "quick" do registry — reprodução byte-a-byte travada em testes.
 
 # Timeouts (segundos) por fonte × profile — generosos mas finitos.
 TIMEOUTS = {
@@ -75,6 +76,16 @@ TIMEOUTS = {
     "comc": {"quick": 30 * 60, "full": 75 * 60},     # ~8 min/era + margem
     "liga": {"quick": 15 * 60, "full": 30 * 60},
 }
+
+# Timeout próprio da COLETA ao vivo da Liga (modo --collect-liga, headful). É um
+# passo à parte: se estourar, a Liga vira "timeout (coleta)" mas o run continua
+# com as outras fontes (isolamento — uma fonte frágil não derruba a entrega).
+LIGA_COLLECT_TIMEOUT = 90 * 60
+
+
+def _skip_note(skipped: list[str], reason: str) -> str:
+    """Nota honesta p/ o status quando parte do escopo não é coberta pela fonte."""
+    return f"sets fora do escopo desta fonte ({reason}): {', '.join(skipped)}" if skipped else ""
 
 # Idade máxima (horas) do data/liga_offers.csv antes de avisar o operador —
 # a coleta da Liga é manual/headful; preços mudam diário, então acima disso
@@ -90,6 +101,32 @@ def _staleness_warning(mtime: float, now: float | None = None,
         return None
     return (f"⚠️ CSV da Liga com {age_h:.0f}h (> {max_hours:.0f}h) — "
             f"considere re-coletar (collect_liga_live.py)")
+
+
+def _liga_csv_set_names(csv_path: Path) -> set[str]:
+    """Nomes de set presentes no liga_offers.csv (coluna set_name). O CSV guarda
+    o nome COMPLETO ('Prismatic Evolutions'), não o código — por isso a cobertura
+    é checada por nome (que o registry conhece exatamente)."""
+    try:
+        with csv_path.open(encoding="utf-8", newline="") as fh:
+            return {(r.get("set_name") or "").strip()
+                    for r in csv.DictReader(fh) if (r.get("set_name") or "").strip()}
+    except (OSError, csv.Error):
+        return set()
+
+
+def _liga_coverage_note(csv_path: Path, wanted_names: list[str]) -> str:
+    """Aviso se o CSV da Liga NÃO cobre parte do escopo pedido (modo sem coleta).
+    Honesto: não finge cobertura. None/'' se cobre tudo (ou nada foi pedido)."""
+    if not wanted_names:
+        return ""
+    have = _liga_csv_set_names(csv_path)
+    missing = [n for n in wanted_names if n not in have]
+    if not missing:
+        return ""
+    return (f"⚠️ CSV da Liga não cobre {', '.join(missing)} — rode a coleta ao "
+            f"vivo desses sets (--collect-liga ou collect_liga_live.py) p/ a Liga "
+            f"entrar no escopo")
 
 
 def _comc_phase2_status(summaries: dict[str, dict]) -> tuple[str, str]:
@@ -136,19 +173,28 @@ def _run_step(name: str, cmd: list[str], cwd: Path, timeout_s: int,
         return "falhou", f"executável não encontrado: {exc}", time.time() - t0
 
 
-def scan_ct(profile: str, stamp: str, timeout_s: int) -> tuple[str, str, float, Path | None]:
+def scan_ct(scope: object, stamp: str, timeout_s: int) -> tuple[str, str, float, Path | None]:
     repo = REPOS["ct"]
     out = repo / "outputs" / f"integrated_{stamp}.xlsx"
     cmd = [str(VENV_PY["ct"]), str(repo / "cardtrader_scanner.py")]
-    if profile == "full":
+    note = ""
+    if is_full(scope):
         cmd += ["--all-sets"]
     else:
-        cmd += ["--sets", *CT_QUICK_SETS]
+        ct_sets, skipped = to_ct_sets(scope)
+        if not ct_sets:  # escopo só tem sets que o CT não cobre (ex.: só ME)
+            return ("pulado (escopo)",
+                    _skip_note(skipped, "CT não cobre — ex.: era ME sem preço TCG real"),
+                    0.0, None)
+        cmd += ["--sets", *ct_sets]
+        note = _skip_note(skipped, "CT não cobre")
     # THRESHOLD EM FRAÇÃO (0.30 = 30%) — convenção do CT, não mudar!
     cmd += ["--threshold", "0.30", "--chase-only", "--validate-top", "30",
             "--max-consecutive-misses", "40", "--output", str(out)]
     status, detail, dur = _run_step("ct", cmd, repo, timeout_s,
                                     LOG_DIR / f"ct_{stamp}.log")
+    if note:
+        detail = f"{detail}; {note}" if detail else note
     if status == "ok" and out.exists():
         # postprocess do CT (best-effort): gera o .md/.xlsx no formato CT.
         post = repo / "outputs" / f"integrated_{stamp}_post.xlsx"
@@ -159,29 +205,52 @@ def scan_ct(profile: str, stamp: str, timeout_s: int) -> tuple[str, str, float, 
     return status, detail, dur, (out if out.exists() else None)
 
 
-def scan_myp(profile: str, stamp: str, timeout_s: int) -> tuple[str, str, float, Path | None]:
+def scan_myp(scope: object, stamp: str, timeout_s: int) -> tuple[str, str, float, Path | None]:
     repo = REPOS["myp"]
     out = repo / "results" / f"integrated_{stamp}.xlsx"
     cmd = [str(VENV_PY["myp"]), str(repo / "myp_arbitrage_scanner.py"),
            # THRESHOLD EM PERCENT INTEIRO (30 = 30%) — convenção do MYP!
            "--threshold", "30", "--min-price", "50", "-o", str(out)]
-    if profile == "quick":
-        cmd += ["--editions", *MYP_QUICK_EDITIONS]
+    note = ""
+    if not is_full(scope):  # full = sem --editions (varre catálogo inteiro)
+        myp_eds, skipped = to_myp_editions(scope)
+        if not myp_eds:
+            return ("pulado (escopo)", _skip_note(skipped, "MYP não cobre"), 0.0, None)
+        cmd += ["--editions", *myp_eds]
+        note = _skip_note(skipped, "MYP não cobre")
     status, detail, dur = _run_step("myp", cmd, repo, timeout_s,
                                     LOG_DIR / f"myp_{stamp}.log")
+    if note:
+        detail = f"{detail}; {note}" if detail else note
     return status, detail, dur, (out if out.exists() else None)
 
 
-def scan_comc(profile: str, stamp: str, timeout_s: int) -> tuple[str, str, float, list[Path]]:
+def scan_comc(scope: object, stamp: str, timeout_s: int) -> tuple[str, str, float, list[Path]]:
     repo = REPOS["comc"]
-    eras = ["recent"] if profile == "quick" else ["recent", "vintage"]
+    # O COMC scaneia por ERA mas aceita allowlist --sets DENTRO da era. Em modo
+    # escopo, varremos só as eras necessárias filtrando pelos abbrevs pedidos
+    # (mais coerente E mais rápido que varrer a era inteira). Em full, recent+
+    # vintage sem allowlist (comportamento histórico).
+    skipped: list[str] = []
+    if is_full(scope):
+        era_groups: list[tuple[str, list[str] | None]] = [("recent", None), ("vintage", None)]
+    else:
+        groups, skipped = to_comc(scope)
+        if not groups:  # escopo só tem sets que o COMC não cobre (ex.: só ME)
+            return ("pulado (escopo)",
+                    _skip_note(skipped, "COMC não cobre — ex.: era ME sem slug"),
+                    0.0, [])
+        era_groups = [(era, abbrevs) for era, abbrevs in groups]
     print("[comc] ATENÇÃO: o COMC é HEADFUL — vai abrir uma janela do Chrome "
           "de verdade (necessário pro Cloudflare). Não feche a janela.")
+    t_start = time.time()  # p/ não confundir CSV deste run com sobra de run antigo
     overall, details, total_dur = "ok", [], 0.0
-    for era in eras:
+    for era, abbrevs in era_groups:
         cmd = [str(VENV_PY["comc"]), "-m", "comc_scanner", "targeted",
                "--era", era, "--fetch-mode", "playwright", "--no-sheets",
                "--restart", "--chase-only"]
+        if abbrevs:  # allowlist do COMC: nomes/abbrevs separados por vírgula
+            cmd += ["--sets", ",".join(abbrevs)]
         # margem default do COMC já é 0.30 (FRAÇÃO) + piso $10 — canônicos.
         status, detail, dur = _run_step(f"comc-{era}", cmd, repo, timeout_s,
                                         LOG_DIR / f"comc_{era}_{stamp}.log")
@@ -189,32 +258,76 @@ def scan_comc(profile: str, stamp: str, timeout_s: int) -> tuple[str, str, float
         if status != "ok":
             overall = status
             details.append(f"{era}: {detail}")
-    outs = latest_comc_outputs(repo)
+    note = _skip_note(skipped, "COMC não cobre")
+    if note:
+        details.append(note)
+    # IMPORTANTE: o COMC mantém um *_latest.csv FIXO por era (sobrescrito). Só
+    # devolvemos os das eras VARRIDAS neste run E escritos AGORA (mtime>=t_start)
+    # — senão um vintage_latest.csv de um run --full anterior vazaria deals fora
+    # do escopo (ex.: WotC vintage numa run --sets PRE,SSP que só varreu recent).
+    scanned_eras = {era for era, _ in era_groups}
+    outs = [p for p in latest_comc_outputs(repo)
+            if any(f"comc_deals_{e}_latest" in p.name for e in scanned_eras)
+            and p.stat().st_mtime >= t_start]
     return overall, "; ".join(details), total_dur, outs
 
 
-def scan_liga(profile: str, stamp: str, timeout_s: int) -> tuple[str, str, float, Path | None]:
+def collect_liga(scope: object, stamp: str) -> tuple[str, str]:
+    """Dispara a COLETA ao vivo da Liga pros sets do escopo (HEADFUL — abre
+    Chrome). Passo à parte, com timeout próprio: se falhar/estourar, devolve o
+    status mas o run da Liga continua tentando ler o CSV que houver. NÃO roda em
+    full (coletar o catálogo inteiro ao vivo é inviável)."""
+    repo = REPOS["liga"]
+    if is_full(scope):
+        return "pulado (coleta)", "--collect-liga não se aplica a full (coleta ao vivo do catálogo inteiro é inviável)"
+    liga_codes, _ = to_liga_codes(scope)
+    if not liga_codes:
+        return "pulado (coleta)", "nenhum set do escopo existe na Liga (ex.: era ME)"
+    cmd = [str(VENV_PY["liga"]), str(repo / "src" / "collect_liga_live.py"),
+           "--sets", *liga_codes, "--no-report"]
+    print("[liga-collect] ATENÇÃO: coleta ao vivo HEADFUL — abre janela do Chrome "
+          "(patchright fura o Cloudflare). Não feche a janela.")
+    status, detail, _dur = _run_step("liga-collect", cmd, repo, LIGA_COLLECT_TIMEOUT,
+                                     LOG_DIR / f"liga_collect_{stamp}.log")
+    if status == "timeout":
+        return "timeout (coleta)", f"coleta da Liga excedeu {LIGA_COLLECT_TIMEOUT//60} min"
+    if status != "ok":
+        return f"{status} (coleta)", detail
+    return "ok (coleta)", f"coletou {', '.join(liga_codes)}"
+
+
+def scan_liga(scope: object, stamp: str, timeout_s: int,
+              collect: bool = False) -> tuple[str, str, float, Path | None]:
     """Liga roda a partir do data/liga_offers.csv do repo da Liga.
 
-    O CSV vem do coletor AO VIVO de lá (headful; rodar ANTES do integrado):
-      cd C:\\Users\\mathe\\liga-pokemon-scanner
-      .venv\\Scripts\\python.exe src\\collect_liga_live.py --sets PRE --no-report
-    Não disparamos a coleta daqui de propósito: ela é headful/lenta e o
-    operador escolhe os sets; o integrado só consome o CSV mais recente."""
+    Dois modos:
+      - collect=False (padrão): consome o CSV mais recente (gerado pelo coletor
+        ao vivo de lá, headful) e AVISA se ele não cobre os sets do escopo. Não
+        dispara coleta — ela é headful/lenta e não roda sozinha de madrugada.
+      - collect=True (--collect-liga): dispara a coleta ao vivo dos sets do
+        escopo ANTES de ler (passo headful com timeout próprio; se falhar, segue
+        lendo o CSV que houver). É opt-in justamente por ser headful."""
     repo = REPOS["liga"]
+    collect_note = ""
+    if collect:
+        cstatus, cdetail = collect_liga(scope, stamp)
+        collect_note = f"coleta: {cstatus} ({cdetail})" if cdetail else f"coleta: {cstatus}"
     csv_real = repo / "data" / "liga_offers.csv"
     if not csv_real.exists():
-        return ("indisponível",
-                "sem data/liga_offers.csv; rode o coletor ao vivo no repo da Liga "
-                "(src/collect_liga_live.py --sets ... --no-report) e re-rode",
-                0.0, None)
+        base = ("sem data/liga_offers.csv; rode o coletor ao vivo no repo da Liga "
+                "(src/collect_liga_live.py --sets ... --no-report) ou use "
+                "--collect-liga, e re-rode")
+        return ("indisponível", f"{base}; {collect_note}" if collect_note else base, 0.0, None)
     stale = _staleness_warning(csv_real.stat().st_mtime)
+    wanted = [] if is_full(scope) else to_liga_names(scope)
+    coverage = "" if collect else _liga_coverage_note(csv_real, wanted)
     cmd = [str(VENV_PY["liga"]), str(repo / "src" / "main.py")]
     status, detail, dur = _run_step(
         "liga", cmd, repo, timeout_s, LOG_DIR / f"liga_{stamp}.log",
         env_extra={"LIGA_OFFERS_SOURCE": "csv", "LIGA_TCG_SOURCE": "pokemontcg"})
-    if stale:  # aviso de CSV velho — nunca bloqueia o run
-        detail = f"{stale}; {detail}" if detail else stale
+    for extra in (collect_note, coverage, stale):  # avisos — nunca bloqueiam o run
+        if extra:
+            detail = f"{extra}; {detail}" if detail else extra
     reports = sorted((repo / "reports").glob("report_*.json"),
                      key=lambda p: p.stat().st_mtime)
     out = reports[-1] if status == "ok" and reports else None
@@ -227,8 +340,20 @@ def scan_liga(profile: str, stamp: str, timeout_s: int) -> tuple[str, str, float
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Scanner integrado de singles Pokémon (MYP+CT+COMC+Liga)")
-    ap.add_argument("--profile", choices=["quick", "full"], default="quick",
-                    help="quick = principais sets SV; full = catálogo inteiro (HORAS)")
+    ap.add_argument("--profile", choices=["quick", "full"], default=None,
+                    help="quick = principais sets SV+ME; full = catálogo inteiro "
+                         "(HORAS). Default quick. Mutuamente exclusivo com --sets.")
+    ap.add_argument("--sets", type=str, default=None,
+                    help="ESCOPO COORDENADO: códigos canônicos de set separados "
+                         "por vírgula (ex.: PRE,SSP,SCR) — os 4 scanners varrem "
+                         "EXATAMENTE esses sets, cada um na sua convenção. Também "
+                         "aceita um profile (quick/full). Mutuamente exclusivo com "
+                         "--profile.")
+    ap.add_argument("--collect-liga", action="store_true",
+                    help="dispara a COLETA ao vivo da Liga (HEADFUL, abre Chrome) "
+                         "pros sets do escopo ANTES de ler. Opt-in: sem isto, a "
+                         "Liga só consome o CSV existente e avisa se não cobre o "
+                         "escopo. NÃO use sozinho de madrugada sem supervisão.")
     ap.add_argument("--sources", default="myp,ct,comc,liga",
                     help="fontes, separadas por vírgula (myp,ct,comc,liga)")
     ap.add_argument("--skip-scan", action="store_true",
@@ -252,6 +377,40 @@ def main() -> int:
     if bad:
         ap.error(f"fontes desconhecidas: {bad} (válidas: myp, ct, comc, liga)")
 
+    # ── ESCOPO COORDENADO: --sets e --profile são mutuamente exclusivos ──────
+    if args.sets and args.profile:
+        ap.error("--sets e --profile são mutuamente exclusivos (escolha um)")
+    scope_spec = args.sets or args.profile or "quick"  # default histórico
+    try:
+        scope = resolve_scope(scope_spec)
+    except UnknownSetError as exc:
+        ap.error(str(exc))
+    # quick/full mapeiam pros timeouts existentes; escopo livre usa o de "quick"
+    timeout_profile = "full" if is_full(scope) else "quick"
+    scope_label = ("full (catálogo inteiro)" if is_full(scope)
+                   else ", ".join(e.canonical for e in scope))
+    print(f"Escopo de sets: {scope_label}")
+    if args.collect_liga and "liga" in sources and not is_full(scope) \
+            and not args.skip_scan:
+        print("[liga] --collect-liga ATIVO: a coleta ao vivo (headful) será "
+              "disparada pros sets do escopo.")
+    if args.skip_scan and args.sets:
+        # Honesto: --skip-scan re-lê o output MAIS RECENTE de cada fonte, que pode
+        # ter sido gerado com OUTRO escopo. Não filtramos as linhas pelo escopo
+        # aqui (as fontes não expõem código de set por linha uniformemente).
+        print("[aviso] --sets é IGNORADO em --skip-scan: a tabela reflete os "
+              "outputs mais recentes de cada fonte, no escopo em que foram "
+              "gerados (não há filtro por set na releitura).")
+    if args.skip_scan and args.collect_liga:
+        print("[aviso] --collect-liga é IGNORADO em --skip-scan (a fase de scan "
+              "não roda; nenhuma coleta é disparada).")
+    # Escopo livre grande herda o timeout de "quick" — avisa pra usar --timeout.
+    if not is_full(scope) and not args.skip_scan and not args.timeout \
+            and len(scope) > len(resolve_scope("quick")):
+        print(f"[aviso] escopo com {len(scope)} sets usa o timeout de 'quick' por "
+              f"fonte (MYP {TIMEOUTS['myp']['quick']//60} min etc.); escopos "
+              f"grandes podem estourar — considere --timeout <segundos>.")
+
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -269,15 +428,20 @@ def main() -> int:
     for src in sources:
         if args.skip_scan:
             continue
-        timeout_s = args.timeout or TIMEOUTS[src][args.profile]
-        if src == "ct":
-            st, det, dur, out = scan_ct(args.profile, stamp, timeout_s)
-        elif src == "myp":
-            st, det, dur, out = scan_myp(args.profile, stamp, timeout_s)
-        elif src == "comc":
-            st, det, dur, out = scan_comc(args.profile, stamp, timeout_s)
-        else:
-            st, det, dur, out = scan_liga(args.profile, stamp, timeout_s)
+        timeout_s = args.timeout or TIMEOUTS[src][timeout_profile]
+        try:
+            if src == "ct":
+                st, det, dur, out = scan_ct(scope, stamp, timeout_s)
+            elif src == "myp":
+                st, det, dur, out = scan_myp(scope, stamp, timeout_s)
+            elif src == "comc":
+                st, det, dur, out = scan_comc(scope, stamp, timeout_s)
+            else:
+                st, det, dur, out = scan_liga(scope, stamp, timeout_s,
+                                              collect=args.collect_liga)
+        except Exception as exc:  # isolamento: 1 fonte quebrada não derruba o run
+            st, det, dur, out = "falhou", f"{type(exc).__name__}: {exc}", None, None
+            traceback.print_exc(file=sys.stderr)
         produced[src] = out
         statuses.append(SourceStatus(source=src.upper(), status=st, detail=det,
                                      duration_s=dur,
@@ -294,6 +458,10 @@ def main() -> int:
         if status_obj is None:
             status_obj = SourceStatus(source=src.upper(), status="pulado (skip-scan)")
             statuses.append(status_obj)
+        # Fonte fora do escopo desta run NÃO lê output antigo (senão a tabela
+        # mostraria deals stale de um scan anterior, fora do escopo pedido).
+        if status_obj.status.startswith("pulado (escopo)"):
+            continue
         try:
             src_deals = []
             if src in readers:

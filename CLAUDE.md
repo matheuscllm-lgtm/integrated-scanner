@@ -39,13 +39,64 @@ cd C:\Users\mathe\integrated-scanner
   ~1h-2h no total.
 - `--profile full`: o catálogo inteiro de cada fonte. Leva HORAS (o MYP
   sozinho varre ~348 edições a ~7 min cada). Use com a tarde livre.
+- **`--sets PRE,SSP,SCR` (varredura COORDENADA — novidade 2026-06-21):** os 4
+  scanners varrem EXATAMENTE os mesmos sets, cada um traduzindo o código pra
+  sua convenção (ver "Varredura coordenada" abaixo). Mutuamente exclusivo com
+  `--profile`. Aceita também `quick`/`full` como valor (`--sets quick`).
+- **`--collect-liga`:** dispara a COLETA ao vivo da Liga (HEADFUL — abre Chrome)
+  pros sets do escopo ANTES de ler. **Opt-in**: sem isto, a Liga só consome o
+  CSV existente e AVISA se ele não cobre o escopo. **Não use de madrugada sem
+  supervisão** (Chrome headful pode travar; tem timeout próprio e isola — se
+  falhar, o run continua com as outras 3 fontes).
 - `--sources myp,ct,comc,liga`: escolhe quais fontes rodar (padrão: todas).
 - `--skip-scan`: NÃO roda nada; só re-lê os resultados mais recentes que cada
   scanner já gerou e monta a tabela unificada. Útil pra re-ver dados de hoje.
+  ⚠️ Em `--skip-scan`, `--sets`/`--collect-liga` são IGNORADOS (avisado) — a
+  releitura não filtra por set (as fontes não expõem código de set por linha).
 - `--notorious-only`: só cartas de Pokémon notórios (lista em `notorious.py`).
 - `--min-margin 40`: muda o corte de margem (em PERCENT; padrão 30).
+- `--timeout <segundos>`: sobrescreve o timeout por fonte (use em escopos
+  grandes — `--sets` com muitos sets herda o timeout de "quick").
 - `--fx 5.30`: fixa o câmbio na mão (senão ele é inferido do output do
   CardTrader; último recurso = 5.20).
+
+## Varredura coordenada por set (`set_registry.py`)
+
+> **O problema que isto resolve:** antes, cada fonte tinha a sua lista de sets
+> embutida, e elas NÃO coincidiam (o CT varria 8 sets, o MYP 11, a Liga o que
+> tivesse no CSV). A "tabela unificada" então misturava sets diferentes por
+> fonte. Agora um **código canônico de set** (o oficial: `PRE`, `SSP`, `SCR`...)
+> é traduzido pra convenção de CADA scanner, então `--sets PRE,SSP` faz os 4
+> varrerem EXATAMENTE Prismatic Evolutions e Surging Sparks.
+
+As 4 fontes nomeiam set de jeitos diferentes (tudo verificado no código de cada
+repo e travado em testes — `tests/test_set_registry.py`):
+
+| Fonte | Como nomeia o set | Ex.: Prismatic / 151 |
+|---|---|---|
+| **Liga** | código oficial (= nossa chave canônica) | `PRE` / `MEW` |
+| **MYP** | substring EXATA do título EN | `Prismatic` / `151` |
+| **CardTrader** | código próprio do CT | `pre` / `mew` |
+| **COMC** | scaneia por ERA + allowlist `--sets <abbrev>` | `(recent, PRE)` / `(recent, MEW)` |
+
+> ⚠️ A substring do MYP é guardada EXATA no registry (`Surging`, não `Surging
+> Sparks`; `Journey`, não `Journey Together`) — são as que já funcionam em
+> produção. **Nunca deduzir** substring/alias de set por conta (lição do
+> ASI-Evolve: aliases deduzidos por LLM saíram alucinados).
+
+> ⚠️ Código CT do CardTrader: o CT casa `--sets` contra o `code` da expansão
+> (`pre`, `ssp`, `mew`...), que é o sistema de codes do PRÓPRIO CardTrader —
+> confirmado no alias map `SET_ALIAS_TO_PTCG` (a chave é o code CT). NÃO é o
+> `sv8pt5`/`sv3pt5` do `config.yaml`/`PRIORITY_SET_CODES` (esses são ptcg ids,
+> usados no scan diário do CT, não no `--sets`).
+
+**Era Mega Evolution (Ascended Heroes / Perfect Order / Chaos Rising) = só MYP.**
+Chaves canônicas internas `ASH`/`PFO`/`CHR` (ME não tem código oficial
+consolidado). Liga e COMC não cobrem ME (sem entrada / sem slug); e como o
+pokemontcg.io tem 0% de preço TCG REAL na era ME, o CT também só pegaria
+fallback estat lá. Então ME roda só no MYP (que trata isso nos baldes
+"supranumerário/validar manual"); nas outras fontes ele **pula COM NOTA** no
+status honesto — nunca silencioso, nunca erro.
 
 A entrega é a **tabela markdown impressa no terminal/chat** (todos os deals,
 ordenados por margem). O `.md` e o `.xlsx` em `outputs/` são só apoio local.
@@ -122,11 +173,12 @@ não existe coluna "COMPRAR" e o score vem sempre com a nota de limitação.
 ## Arquitetura (pra quem for mexer no código)
 
 ```
-run_integrated.py   orquestrador: subprocess por fonte + timeout + log por fonte
+run_integrated.py   orquestrador: escopo coordenado + subprocess por fonte + timeout + log
+set_registry.py     registro canônico de sets + tradutores p/ convenção de cada fonte
 normalize.py        leitores por fonte → schema unificado + heurística de valorização
 notorious.py        lista curada de Pokémon notórios + matcher por palavra inteira
 delivery.py         tabela markdown completa + xlsx de apoio + resumo por fonte
-tests/              26 testes (matcher, convenções de margem, status por fonte)
+tests/              40 testes (registry/escopo, matcher, convenções de margem, status)
 outputs/            resultados e logs (não versionado)
 ```
 
