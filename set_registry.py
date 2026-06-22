@@ -114,6 +114,21 @@ def known_canonicals() -> list[str]:
     return [e.canonical for e in _REGISTRY]
 
 
+def entries() -> list[SetEntry]:
+    """Todas as entradas do registro (cópia rasa — não muta o original).
+
+    Acessor público pra quem precisa do mapa COMPLETO de convenções por set —
+    ex.: o cross_source.py, que faz o caminho INVERSO (string de set de uma
+    fonte → código canônico) pra casar a mesma carta entre fontes.
+    """
+    return list(_REGISTRY)
+
+
+def get_entry(canonical: str) -> Optional[SetEntry]:
+    """Entrada pelo código canônico (case-insensitive), ou None se desconhecido."""
+    return _BY_CANON.get((canonical or "").strip().upper())
+
+
 def catalog() -> list[dict]:
     """Catálogo completo de sets pra API/exposição: cada entrada com a chave
     canônica + o nome + era + como CADA fonte cobre (None = fonte não cobre)."""
