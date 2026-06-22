@@ -114,9 +114,8 @@ def build_markdown(deals: list[Deal],
         cells.append(_md_links_cell(row.get("Link oferta"), row.get("Link TCG")))
         lines.append("| " + " | ".join(cells) + " |")
     lines.append("")
-    lines.append("_Valorização = heurística 0-100 (raridade + idade do set + "
-                 "preço-âncora) — sem série histórica; não é previsão. "
-                 "Decisão de compra é do operador._")
+    lines.append("_Decisão de compra é do operador — o scanner ranqueia por "
+                 "margem e flagea; não recomenda compra._")
     return "\n".join(lines) + "\n"
 
 

@@ -183,7 +183,7 @@ que passou no corte de 30% do scanner original é perdido na unificação.
 
 Fonte | Carta | Set | Nº | Raridade | Chase Tier | Notório | Compra (R$) |
 Compra (US$) | FX | Ref TCG (R$) | Ref TCG (US$) | Margem bruta % | Lucro (R$) |
-Qtd | Valorização (0-100) | Notas | Link oferta | Link TCG
+Qtd | Notas | Link oferta | Link TCG
 
 > **Entrega no chat vs. XLSX:** na **tabela markdown de entrega**, as duas
 > últimas colunas (`Link oferta` + `Link TCG`) viram **uma coluna `Links` só**,
@@ -193,12 +193,12 @@ Qtd | Valorização (0-100) | Notas | Link oferta | Link TCG
 > sai do `delivery.build_markdown`.
 
 - **Notório**: ⭐ + nome quando a carta é de um Pokémon da lista curada
-  (`notorious.py`, ~55 ícones com racional comentado). O flag NÃO infla o
-  score de valorização — é informação separada, explícita.
-- **Valorização (0-100)**: heurística portada do CardTrader scanner v2.13
-  (raridade + idade do set + patamar de preço). SEM série histórica de preço —
-  é triagem, não previsão. Pro CT o score vem pronto do scanner; pra
-  MYP/COMC/Liga é calculado aqui com a MESMA fórmula (comparável).
+  (`notorious.py`, ~55 ícones com racional comentado). É informação separada,
+  explícita — não entra no ranqueamento (que é por margem bruta).
+  > Nota: a coluna **Valorização (0-100)** foi REMOVIDA da entrega (operador,
+  > 2026-06-22 — não fazia parte do padrão cross-scanner). A heurística
+  > (`compute_valorization`) continua no código pra leitura nativa do CT e uso
+  > interno, mas **não aparece** na tabela markdown nem no XLSX de entrega.
 - **Qtd**: estoque do vendedor, quando a fonte informa (CT e COMC sim;
   MYP e Liga não → "—").
 - **FX**: o câmbio usado NAQUELA linha (CT: implícito nos preços da própria
