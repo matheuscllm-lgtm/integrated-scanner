@@ -1,11 +1,12 @@
-# Dependências de runtime do scanner integrado.
-#
-# O integrado é um ORQUESTRADOR: roda os 4 scanners como subprocess (cada um no
-# PRÓPRIO venv) e só LÊ os outputs deles pra unificar. Por isso a lista aqui é
-# mínima — não reinstala as deps das fontes (cloudscraper, patchright, etc.).
-#
-# pandas: lê os outputs das fontes (xlsx do CT/MYP, csv do COMC) e escreve o
-#         xlsx de apoio da tabela unificada (normalize.py / delivery.py).
-# openpyxl: engine de .xlsx que o pandas usa pra ler/gravar planilha.
+# Scanner integrado de singles — dependências.
+# (Os 4 scanners-fonte têm os PRÓPRIOS venvs; o integrado os chama como
+#  subprocess, então NÃO precisa das libs deles aqui — só do que ele mesmo usa.)
+
+# Leitura/escrita dos XLSX de cada fonte + tabela unificada de apoio.
 pandas>=2.0
-openpyxl>=3.1.0
+openpyxl>=3.1        # engine xlsx do pandas (read/write)
+
+# Camada API HTTP (APIs expostas E alimentadas) — api.py / api_store.py.
+fastapi>=0.110
+uvicorn[standard]>=0.27
+httpx>=0.27          # cliente usado pelo TestClient do FastAPI (e smoke da API)

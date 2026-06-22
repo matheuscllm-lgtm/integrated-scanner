@@ -51,17 +51,30 @@ from delivery import (MIN_MARGIN_PCT_DEFAULT, SourceStatus, build_markdown,
 from set_registry import (UnknownSetError, is_full, resolve_scope, to_comc,
                           to_ct_sets, to_liga_codes, to_liga_names,
                           to_myp_editions)
+from api_store import build_store, save_store
 
 HERE = Path(__file__).resolve().parent
 OUT_DIR = HERE / "outputs"
 LOG_DIR = OUT_DIR / "logs"
 
-VENV_PY = {  # python.exe do venv de CADA repo (caixa-preta: usamos o deles)
-    "ct": REPOS["ct"] / ".venv" / "Scripts" / "python.exe",
-    "myp": REPOS["myp"] / ".venv" / "Scripts" / "python.exe",
-    "comc": REPOS["comc"] / ".venv" / "Scripts" / "python.exe",
-    "liga": REPOS["liga"] / ".venv" / "Scripts" / "python.exe",
-}
+def _venv_python(repo: Path) -> str:
+    """Interpreter Python a usar pra rodar o scanner de `repo`.
+
+    Preferência: venv do PRÓPRIO repo (caixa-preta, como o operador roda no
+    Windows) — layout Windows `.venv\\Scripts\\python.exe` OU POSIX
+    `.venv/bin/python`. Se o repo não tem venv (ex.: sessão Claude Code na
+    nuvem, onde os deps são instalados no interpreter do container), cai pro
+    `sys.executable` que está rodando o orquestrador."""
+    win = repo / ".venv" / "Scripts" / "python.exe"
+    posix = repo / ".venv" / "bin" / "python"
+    if win.exists():
+        return str(win)
+    if posix.exists():
+        return str(posix)
+    return sys.executable
+
+
+VENV_PY = {src: _venv_python(repo) for src, repo in REPOS.items()}
 
 # A varredura coordenada por set vive em set_registry.py: um código canônico
 # (PRE, SSP, ...) traduzido pra convenção de cada fonte. O escopo é resolvido UMA
@@ -526,6 +539,18 @@ def main() -> int:
     md_path.write_text(md, encoding="utf-8")
     xlsx_path = OUT_DIR / f"integrated_{stamp}.xlsx"
     write_xlsx(final, xlsx_path)
+    # ── ALIMENTA o store JSON que a API HTTP expõe (api.py). Falha aqui NUNCA
+    # derruba a entrega no chat — é subproduto pra integração via API.
+    try:
+        scope_json = "full" if is_full(scope) else [e.canonical for e in scope]
+        store = build_store(final, statuses, scope=scope_json, fx=fx_global,
+                            min_margin=args.min_margin, stamp=stamp,
+                            notorious_only=args.notorious_only)
+        save_store(store)
+        print(f"(store API alimentado: {OUT_DIR / 'deals_store.json'})")
+    except Exception as exc:  # pragma: no cover — best-effort
+        print(f"[aviso] não consegui alimentar o store da API: "
+              f"{type(exc).__name__}: {exc}", file=sys.stderr)
     print()
     print(md)
     print(f"(apoio local: {md_path} e {xlsx_path} — a entrega oficial é a "
