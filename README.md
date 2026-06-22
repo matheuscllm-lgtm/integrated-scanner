@@ -21,7 +21,7 @@ cd C:\Users\mathe\integrated-scanner
 ```powershell
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install pandas openpyxl pytest
-.venv\Scripts\python.exe -m pytest tests/ -q   # 15 testes
+.venv\Scripts\python.exe -m pytest tests/ -q   # 86 testes
 ```
 
 Pré-requisito: os 4 repos das fontes clonados nos caminhos canônicos com os
