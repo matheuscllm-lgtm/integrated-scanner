@@ -26,8 +26,12 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
 
+      # `python -m pytest` (não o `pytest` pelado): adiciona o CWD (raiz do repo)
+      # ao sys.path, então `import api`/`import cross_source` etc. resolvem — é a
+      # invocação canônica do CLAUDE.md. Com `pytest` pelado, a raiz fica fora do
+      # path e tests/test_api.py quebra na coleta (ModuleNotFoundError: api).
       - name: Run pytest
-        run: pytest -q
+        run: python -m pytest -q
 
       # Smoke do orquestrador SEM rede e SEM outputs reais: --skip-scan não roda
       # nenhuma fonte; os REPOS apontam pra caminhos Windows ausentes no runner,
