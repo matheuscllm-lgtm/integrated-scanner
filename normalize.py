@@ -47,7 +47,7 @@ FX_FALLBACK = 5.20  # último recurso, documentado; prefira --fx ou inferência 
 UNIFIED_COLUMNS = [
     "Fonte", "Carta", "Set", "Nº", "Raridade", "Chase Tier", "Notório",
     "Compra (R$)", "Compra (US$)", "FX", "Ref TCG (R$)", "Ref TCG (US$)",
-    "Margem bruta %", "Lucro (R$)", "Qtd", "Valorização (0-100)",
+    "Margem bruta %", "Lucro (R$)", "Qtd",
     "Notas", "Link oferta", "Link TCG",
 ]
 
@@ -91,7 +91,6 @@ class Deal:
             "Margem bruta %": round(self.margem_pct, 1),
             "Lucro (R$)": round(self.lucro_brl, 2),
             "Qtd": self.qtd if self.qtd is not None else "—",
-            "Valorização (0-100)": self.valorizacao if self.valorizacao is not None else "—",
             "Notas": "; ".join(self.notas),
             "Link oferta": self.link_oferta,
             "Link TCG": self.link_tcg,
