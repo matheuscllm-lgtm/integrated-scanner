@@ -140,8 +140,10 @@ def build_cross_source_markdown(cards: list,
         f"Cartas que passaram o corte (**margem ≥ {min_margin_pct:.0f}%**) em "
         f"**2+ fontes**, com o preço de compra de cada fonte lado a lado (⬅ = mais "
         f"barata). Casamento por **set canônico + número de coleção** (âncora "
-        f"forte); **`validar`** = casado por nome (fonte sem número, ex. Liga) ou "
-        f"nome divergente → confira a versão exata. Limitação honesta: compara só "
+        f"forte; nomes divergentes no mesmo número = cartas diferentes, são "
+        f"separadas, não viram uma linha enganosa). **`validar`** = casado por "
+        f"nome (fonte sem número, ex. Liga) → confira a versão exata. Limitação "
+        f"honesta: compara só "
         f"cartas que já são deal ≥ corte em cada fonte (um preço menor PORÉM abaixo "
         f"do corte noutra fonte não aparece). A margem exibida é a da compra mais "
         f"barata. O integrado não decide compra.")

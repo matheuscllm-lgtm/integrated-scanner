@@ -119,10 +119,43 @@ def _clean_display_name(carta: str) -> str:
     return s.strip()
 
 
-def _first_token(norm_name: str) -> str:
-    """Primeiro token do nome normalizado (~o nome do Pokémon): 'umbreon ex' →
-    'umbreon'. Usado pra detectar colisão de número entre cartas diferentes."""
-    return norm_name.split(" ", 1)[0] if norm_name else ""
+def _name_compatible(a: str, b: str) -> bool:
+    """Dois nomes normalizados descrevem a MESMA carta?
+
+    True se um é SUBCONJUNTO de tokens do outro: 'umbreon' ⊆ 'umbreon ex' (uma
+    fonte só omitiu o sufixo de variante). False pra 'umbreon ex' vs 'espeon ex'
+    (Pokémon diferente), 'umbreon ex' vs 'umbreon v' (variante diferente) e
+    'mr mime' vs 'mr rime' (nome composto diferente) — cartas DIFERENTES que
+    colidiram no mesmo número por mapeamento furado de alguma fonte."""
+    ta, tb = set(a.split()), set(b.split())
+    if not ta or not tb:
+        return a == b
+    return ta <= tb or tb <= ta
+
+
+def _name_components(items: list[tuple]) -> list[list[tuple]]:
+    """Particiona itens em componentes de nome COMPATÍVEL (union-find sobre
+    _name_compatible). Itens cujos nomes apontam pra cartas diferentes ficam em
+    componentes SEPARADOS — assim duas cartas distintas que colidiram num número
+    não viram uma linha enganosa (nome de uma + preço da outra); cada uma segue
+    seu caminho (e some do cross-source se ficar com 1 fonte só)."""
+    n = len(items)
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _name_compatible(items[i][3], items[j][3]):
+                parent[find(i)] = find(j)
+    comps: dict[int, list[tuple]] = defaultdict(list)
+    for i in range(n):
+        comps[find(i)].append(items[i])
+    return list(comps.values())
 
 
 # ── set canônico (caminho inverso) ──────────────────────────────────────────
@@ -265,37 +298,35 @@ def _annotate(deals: list[Deal]) -> list[tuple[Deal, str, str, str]]:
 def _cluster_within_set(items: list[tuple]) -> list[list[tuple]]:
     """Agrupa itens de UM set canônico em clusters de 'mesma carta'.
 
-    Estratégia: número é a âncora (cluster por número). Itens SEM número (Liga)
-    se juntam a um cluster numerado SÓ se houver um único cluster com o mesmo
-    nome normalizado (casamento por nome → marcado validar depois); senão se
-    agrupam entre si por nome."""
+    1) Número é a âncora: cluster por número normalizado.
+    2) Cada cluster numerado é PARTIDO por compatibilidade de nome — duas cartas
+       diferentes que colidiram no mesmo número (mapeamento furado de uma fonte)
+       viram componentes separados, nunca uma linha só enganosa.
+    3) Itens SEM número (a Liga não exporta número) se juntam a um componente
+       numerado SÓ se houver UM único cujo nome seja compatível (casamento por
+       nome → marcado validar depois); 0 ou >1 compatíveis = ambíguo, não chuta,
+       e eles se agrupam entre si por nome."""
     numbered = [it for it in items if it[2]]
     unnumbered = [it for it in items if not it[2]]
 
     num_clusters: dict[str, list[tuple]] = defaultdict(list)
     for it in numbered:
         num_clusters[it[2]].append(it)
-    clusters: list[list[tuple]] = list(num_clusters.values())
-
-    # índice nome-normalizado → clusters numerados que contêm aquele nome
-    name_index: dict[str, list[list[tuple]]] = defaultdict(list)
-    for cl in clusters:
-        for nm in {it[3] for it in cl}:
-            name_index[nm].append(cl)
+    clusters: list[list[tuple]] = []
+    for cl in num_clusters.values():
+        clusters.extend(_name_components(cl))   # split nº-colisão de cartas distintas
 
     leftover: list[tuple] = []
     for it in unnumbered:
-        cand = name_index.get(it[3], [])
-        if len(cand) == 1:           # único cluster numerado com esse nome → anexa
-            cand[0].append(it)
-        else:                        # ambíguo (0 ou >1) → não chuta
+        compatible = [cl for cl in clusters
+                      if any(_name_compatible(it[3], x[3]) for x in cl)]
+        if len(compatible) == 1:        # único componente compatível → anexa
+            compatible[0].append(it)
+        else:                           # 0 ou >1 → ambíguo, não chuta
             leftover.append(it)
 
-    # itens sem número que sobraram: agrupam entre si por nome
-    by_name: dict[str, list[tuple]] = defaultdict(list)
-    for it in leftover:
-        by_name[it[3]].append(it)
-    clusters.extend(by_name.values())
+    if leftover:                        # sem-número órfãos: agrupam entre si por nome
+        clusters.extend(_name_components(leftover))
     return clusters
 
 
@@ -318,20 +349,16 @@ def _make_card(cset: str, cluster: list[tuple]) -> CrossSourceCard:
         max((d.carta for d in by_source.values()), key=lambda s: len(s or "")))
     number = next((it[2] for it in cluster if it[2]), "")
 
-    # flags de incerteza (validar manualmente)
-    first_tokens = {_first_token(it[3]) for it in cluster if it[3]}
-    name_disagree = len(first_tokens) > 1
+    # flags de incerteza (validar manualmente). Após o split por compatibilidade
+    # de nome, um cluster já é coerente (mesma carta) — o único casamento "fraco"
+    # que resta é o por NOME (fonte sem número, ex.: Liga), sempre flagado.
     has_unnumbered = any(not it[2] for it in cluster)
     has_numbered = any(it[2] for it in cluster)
-    matched_by_name_only = has_unnumbered and not has_numbered
-    name_attached = has_unnumbered and has_numbered  # Liga colada num cluster numerado
 
     motivos = []
-    if name_disagree:
-        motivos.append("número casa mas o nome do Pokémon diverge entre fontes")
-    if matched_by_name_only:
+    if has_unnumbered and not has_numbered:
         motivos.append("casado só por nome (nenhuma fonte deu número)")
-    elif name_attached:
+    elif has_unnumbered and has_numbered:
         motivos.append("fonte sem número (ex.: Liga) casada por nome")
 
     return CrossSourceCard(

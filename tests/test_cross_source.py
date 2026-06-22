@@ -108,16 +108,64 @@ def test_liga_without_number_matched_by_name_is_validar():
     assert "nome" in cards[0].motivo.lower()
 
 
-def test_number_collision_different_pokemon_is_validar():
-    # mesmo set + mesmo número mas Pokémon diferente = mapeamento suspeito
+def test_number_collision_different_pokemon_not_grouped():
+    # mesmo set + mesmo número mas Pokémon diferente (mapeamento furado de uma
+    # fonte) → NÃO vira uma linha enganosa: cada um some do cross-source
     deals = [
         _deal("MYP", "Umbreon ex", "Prismatic Evolutions", "161"),
         _deal("COMC", "Espeon ex", "Prismatic Evolutions", "161"),
     ]
+    assert group_cross_source(deals) == []
+
+
+def test_number_collision_real_match_survives_bad_mapping_drops():
+    # 2 fontes concordam (Umbreon #161); 1 fonte mapeou #161 como Espeon (erro).
+    # O match real sobrevive; o mapeamento furado é excluído (não polui a linha).
+    deals = [
+        _deal("MYP", "Umbreon ex", "Prismatic Evolutions", "161", compra_brl=900),
+        _deal("CardTrader", "Umbreon ex", "pre", "161", compra_brl=820),
+        _deal("COMC", "Espeon ex", "Prismatic Evolutions", "161", compra_brl=300),
+    ]
     cards = group_cross_source(deals)
     assert len(cards) == 1
-    assert cards[0].validar is True
-    assert "diverge" in cards[0].motivo.lower()
+    c = cards[0]
+    assert c.display_name == "Umbreon ex"
+    assert set(c.sources) == {"MYP", "CardTrader"}     # COMC/Espeon NÃO entra
+    assert c.cheapest_source == "CardTrader"           # 820, não os 300 do Espeon
+    assert c.validar is False
+
+
+def test_variant_suffix_collision_split():
+    # mesmo Pokémon, MESMO número, variante diferente (ex vs V) = cartas
+    # diferentes → não agrupa ({umbreon,ex} vs {umbreon,v} não é subconjunto)
+    deals = [
+        _deal("MYP", "Umbreon ex", "Prismatic Evolutions", "161"),
+        _deal("CardTrader", "Umbreon V", "pre", "161"),
+    ]
+    assert group_cross_source(deals) == []
+
+
+def test_multiword_name_collision_split():
+    # 'Mr. Mime' vs 'Mr. Rime' no mesmo número → {mr,mime} vs {mr,rime}
+    # não-compatíveis → não agrupa (antes, comparar só o 1º token os fundia)
+    deals = [
+        _deal("MYP", "Mr. Mime", "151", "122"),
+        _deal("COMC", "Mr. Rime", "151", "122"),
+    ]
+    assert group_cross_source(deals) == []
+
+
+def test_subset_name_stays_grouped_no_flag():
+    # 'Umbreon' (fonte omitiu o sufixo) ⊆ 'Umbreon ex' = mesma carta → agrupa,
+    # sem flag (nome compatível, número casa)
+    deals = [
+        _deal("MYP", "Umbreon", "Prismatic Evolutions", "161", compra_brl=900),
+        _deal("CardTrader", "Umbreon ex", "pre", "161", compra_brl=820),
+    ]
+    cards = group_cross_source(deals)
+    assert len(cards) == 1
+    assert cards[0].display_name == "Umbreon ex"   # exibe o nome mais completo
+    assert cards[0].validar is False
 
 
 def test_single_source_card_not_returned():

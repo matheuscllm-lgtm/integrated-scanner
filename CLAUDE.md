@@ -124,8 +124,14 @@ apareceram como deal (≥ corte) em **2 ou mais fontes**.
   prefixo de letra preservado (`TG12`, variantes `a/b`).
 - **Liga não exporta número** no report → só casa por **(set + nome)**. Isso é
   mais fraco (duas raridades do mesmo Pokémon no mesmo set podem colidir) → sai
-  **sempre marcado `validar`**. Idem quando o número casa mas o nome do Pokémon
-  diverge entre fontes (mapeamento suspeito).
+  **sempre marcado `validar`**.
+- **Colisão de número entre cartas DIFERENTES** (mapeamento furado de uma fonte
+  mapeia, ex., `#161` como Espeon enquanto duas outras dizem Umbreon): os nomes
+  são comparados por **subconjunto de tokens** (`umbreon` ⊆ `umbreon ex` = mesma
+  carta; `umbreon ex` vs `espeon ex`/`umbreon v`/`mr rime` = cartas diferentes).
+  Cartas diferentes que colidem num número são **separadas** — o match real
+  sobrevive e o mapeamento furado **some** do cross-source, em vez de virar uma
+  linha enganosa (nome de uma carta + preço de outra).
 - **Nunca chuta:** set que não resolve com segurança, ou carta numa fonte só,
   **não entra** na seção (fica só na tabela plana). Sem fuzzy de nome (lição do
   ASI-Evolve: alias deduzido por LLM alucina) — só igualdade normalizada.
