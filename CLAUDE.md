@@ -212,14 +212,16 @@ não existe coluna "COMPRAR" e o score vem sempre com a nota de limitação.
 ## Arquitetura (pra quem for mexer no código)
 
 ```
-run_integrated.py   orquestrador: escopo coordenado + subprocess por fonte + timeout + log
+run_integrated.py   orquestrador: escopo coordenado + subprocess por fonte + alimenta o store
 set_registry.py     registro canônico de sets + tradutores p/ convenção de cada fonte
 cross_source.py     casa a MESMA carta entre fontes (set canônico + número) p/ preço lado-a-lado
 normalize.py        leitores por fonte → schema unificado + heurística de valorização
 notorious.py        lista curada de Pokémon notórios + matcher por palavra inteira
 delivery.py         tabela markdown completa + xlsx de apoio + resumo por fonte + seção cross-source
-tests/              62 testes (registry/escopo, cross-source, matcher, margem, status)
-outputs/            resultados e logs (não versionado)
+api_store.py        store JSON unificado (alimentado pelo run; lido pela API)
+api.py              API HTTP FastAPI (expõe deals/sets/status; dispara scan)
+tests/              86 testes (registry/escopo, cross-source, matcher, margem, status, API/store)
+outputs/            resultados, logs e deals_store.json (não versionado)
 ```
 
 Falha de uma fonte NÃO derruba as outras: cada uma tem timeout e log próprios
@@ -231,6 +233,43 @@ Rodar os testes:
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/ -q
 ```
+
+## API HTTP — "APIs expostas E alimentadas" (`api.py` + `api_store.py`)
+
+> **O que é, em uma frase:** uma "tomada" HTTP no scanner integrado. Programas
+> (ou você, no navegador) podem PERGUNTAR os deals unificados, o catálogo de
+> sets e o status — e até DISPARAR um scan coordenado — por URLs, sem terminal.
+
+Como funciona o "alimentadas E expostas":
+- **Alimentadas:** todo run do `run_integrated.py` GRAVA `outputs/deals_store.json`
+  (deals unificados + status por fonte + metadados do run). É o `api_store.py`,
+  gravação atômica + cópia histórica `deals_store_<stamp>.json`.
+- **Expostas:** o `api.py` (FastAPI) LÊ esse store e serve por HTTP.
+
+Subir o servidor:
+```powershell
+cd C:\Users\mathe\integrated-scanner
+.venv\Scripts\python.exe -m uvicorn api:app --host 127.0.0.1 --port 8077
+```
+Depois abra **http://127.0.0.1:8077/docs** (Swagger UI interativo, auto-gerado).
+
+Endpoints:
+| Método | Rota | O que faz |
+|---|---|---|
+| GET | `/health` | liveness |
+| GET | `/` | info + resumo do último run |
+| GET | `/sets` | catálogo canônico de sets + como cada fonte cobre cada um |
+| GET | `/sources` | as 4 fontes + status do último run (flag headful) |
+| GET | `/deals` | deals unificados do store; filtros `?source=&set=&min_margin=&notorious=&q=&limit=` |
+| GET | `/status` | metadados do último run + status honesto por fonte |
+| POST | `/scan` | DISPARA scan coordenado em background (alimenta o store); body `{sets, sources, min_margin, collect_liga, notorious_only}` → `job_id` |
+| GET | `/scan/{job_id}` | status do job de scan |
+
+Segurança/escopo: o `POST /scan` roda `run_integrated.py` em background; fontes
+**headful** (COMC/Liga) abrem Chrome — por isso o default é `["myp","ct"]` e
+COMC/Liga exigem opt-in explícito no corpo (Liga headful real só com
+`collect_liga: true`). A API **só EXPÕE** o que o pipeline produz: continua
+valendo "RANQUEIA/FLAGEIA, NUNCA decide compra"; margem bruta sem taxas.
 
 ## Repos das fontes (não editar a partir daqui)
 

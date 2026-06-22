@@ -129,6 +129,28 @@ def get_entry(canonical: str) -> Optional[SetEntry]:
     return _BY_CANON.get((canonical or "").strip().upper())
 
 
+def catalog() -> list[dict]:
+    """Catálogo completo de sets pra API/exposição: cada entrada com a chave
+    canônica + o nome + era + como CADA fonte cobre (None = fonte não cobre)."""
+    out = []
+    for e in _REGISTRY:
+        out.append({
+            "canonical": e.canonical,
+            "name": e.name,
+            "era": e.era,
+            "sources": {
+                "liga": e.liga,
+                "myp": e.myp,
+                "ct": e.ct,
+                "comc": {"era": e.comc[0], "abbrev": e.comc[1]} if e.comc else None,
+            },
+            "covered_by": [s for s, v in
+                           (("liga", e.liga), ("myp", e.myp), ("ct", e.ct),
+                            ("comc", e.comc)) if v],
+        })
+    return out
+
+
 def resolve_scope(spec: str) -> object:
     """Resolve um spec de escopo numa lista de SetEntry (ou no sentinela FULL).
 
