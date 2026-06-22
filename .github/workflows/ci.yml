@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest + smoke (Python 3.11)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run pytest
+        run: pytest -q
+
+      # Smoke do orquestrador SEM rede e SEM outputs reais: --skip-scan não roda
+      # nenhuma fonte; os REPOS apontam pra caminhos Windows ausentes no runner,
+      # então cada fonte cai no ramo "sem output" e a entrega sai vazia (exit 0).
+      # Exercita imports + pipeline de normalização/entrega de ponta a ponta.
+      - name: Smoke do orquestrador (offline)
+        run: python run_integrated.py --skip-scan --sources myp,ct
