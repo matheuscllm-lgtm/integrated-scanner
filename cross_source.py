@@ -134,28 +134,55 @@ def _name_compatible(a: str, b: str) -> bool:
 
 
 def _name_components(items: list[tuple]) -> list[list[tuple]]:
-    """Particiona itens em componentes de nome COMPATÍVEL (union-find sobre
-    _name_compatible). Itens cujos nomes apontam pra cartas diferentes ficam em
-    componentes SEPARADOS — assim duas cartas distintas que colidiram num número
-    não viram uma linha enganosa (nome de uma + preço da outra); cada uma segue
-    seu caminho (e some do cross-source se ficar com 1 fonte só)."""
-    n = len(items)
-    parent = list(range(n))
+    """Particiona itens em CLIQUES de nome COMPATÍVEL.
 
-    def find(x: int) -> int:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
+    Por que CLIQUE e não componente-conexo (union-find): `_name_compatible`
+    (subconjunto de tokens) NÃO é transitivo. Ex.: o nome PELADO "umbreon" é
+    compatível com "umbreon ex" E com "umbreon v", mas "umbreon ex" e "umbreon
+    v" são cartas DIFERENTES. Num union-find o pelado faz a PONTE e funde as três
+    numa só linha enganosa ("nome de uma + preço de outra") — exatamente o que
+    este módulo jura prevenir. Num CLIQUE, todo par DENTRO de um cluster precisa
+    ser mutuamente compatível, então ex e v NUNCA caem no mesmo cluster mesmo com
+    o pelado presente.
 
-    for i in range(n):
-        for j in range(i + 1, n):
-            if _name_compatible(items[i][3], items[j][3]):
-                parent[find(i)] = find(j)
-    comps: dict[int, list[tuple]] = defaultdict(list)
-    for i in range(n):
-        comps[find(i)].append(items[i])
-    return list(comps.values())
+    Construção gulosa (preferir PERDER um casamento a INVENTAR um):
+      1) Itens com nome ESPECÍFICO (sufixo de variante: ex/v/vmax/…) viram a
+         semente dos cliques — um cluster por grupo de nomes mutuamente
+         compatíveis.
+      2) Um item PELADO (subconjunto puro de outro nome) é anexado ao único
+         cluster com que é compatível. Se ele é compatível com ≥2 clusters
+         MUTUAMENTE incompatíveis (ambíguo), NÃO é fundido em nenhum: vira seu
+         próprio cluster, marcado `validar` depois (vínculo ambíguo > linha
+         enganosa silenciosa)."""
+    return [cl for cl, _amb in _name_cliques(items)]
+
+
+def _name_cliques(items: list[tuple]) -> list[tuple[list[tuple], bool]]:
+    """Como _name_components, mas devolve (clique, ambiguo) por cluster.
+
+    `ambiguo=True` marca um cluster nascido de um item cujo nome batia com ≥2
+    cliques MUTUAMENTE incompatíveis (ex.: o pelado "umbreon" diante de "umbreon
+    ex" E "umbreon v"): não dá pra dizer a qual variante ele pertence, então ele
+    não é fundido em nenhuma e o cluster sai flagado `validar` (vínculo ambíguo >
+    linha enganosa silenciosa)."""
+    clusters: list[list[tuple]] = []
+    ambiguous: list[bool] = []
+    # Itens mais específicos (nome mais longo em tokens) primeiro: ancoram os
+    # cliques antes que um pelado tente colá-los.
+    ordered = sorted(items, key=lambda it: len(it[3].split()), reverse=True)
+    for it in ordered:
+        # cliques onde ESTE item é compatível com TODOS os membros
+        fits = [k for k, cl in enumerate(clusters)
+                if all(_name_compatible(it[3], x[3]) for x in cl)]
+        if len(fits) == 1:
+            clusters[fits[0]].append(it)
+        else:
+            # 0 cliques → novo cluster limpo; ≥2 cliques compatíveis (e
+            # mutuamente incompatíveis entre si, senão teriam sido um só) →
+            # ambíguo: não funde, abre cluster próprio flagado.
+            clusters.append([it])
+            ambiguous.append(len(fits) >= 2)
+    return list(zip(clusters, ambiguous))
 
 
 # ── set canônico (caminho inverso) ──────────────────────────────────────────
@@ -295,42 +322,48 @@ def _annotate(deals: list[Deal]) -> list[tuple[Deal, str, str, str]]:
     return items
 
 
-def _cluster_within_set(items: list[tuple]) -> list[list[tuple]]:
+def _cluster_within_set(items: list[tuple]) -> list[tuple[list[tuple], bool]]:
     """Agrupa itens de UM set canônico em clusters de 'mesma carta'.
 
+    Devolve (cluster, ambiguo) por grupo (ver _name_cliques p/ `ambiguo`).
+
     1) Número é a âncora: cluster por número normalizado.
-    2) Cada cluster numerado é PARTIDO por compatibilidade de nome — duas cartas
-       diferentes que colidiram no mesmo número (mapeamento furado de uma fonte)
-       viram componentes separados, nunca uma linha só enganosa.
-    3) Itens SEM número (a Liga não exporta número) se juntam a um componente
-       numerado SÓ se houver UM único cujo nome seja compatível (casamento por
-       nome → marcado validar depois); 0 ou >1 compatíveis = ambíguo, não chuta,
-       e eles se agrupam entre si por nome."""
+    2) Cada cluster numerado é PARTIDO em CLIQUES de nome — duas cartas diferentes
+       que colidiram no mesmo número (mapeamento furado de uma fonte, OU variantes
+       ex/v do mesmo Pokémon) viram cliques separados, nunca uma linha enganosa.
+       Como _name_compatible (subconjunto de tokens) não é transitivo, clique (e
+       não componente-conexo) é o que impede o nome pelado de PONTEAR variantes.
+    3) Itens SEM número (a Liga não exporta número) se juntam a um clique numerado
+       SÓ se forem compatíveis com TODOS os membros dele (clique-safe) e houver UM
+       único (casamento por nome → marcado validar depois); 0 ou >1 = ambíguo, não
+       chuta, e eles se agrupam entre si por nome."""
     numbered = [it for it in items if it[2]]
     unnumbered = [it for it in items if not it[2]]
 
     num_clusters: dict[str, list[tuple]] = defaultdict(list)
     for it in numbered:
         num_clusters[it[2]].append(it)
-    clusters: list[list[tuple]] = []
+    clusters: list[tuple[list[tuple], bool]] = []
     for cl in num_clusters.values():
-        clusters.extend(_name_components(cl))   # split nº-colisão de cartas distintas
+        clusters.extend(_name_cliques(cl))   # split nº-colisão / variantes
 
     leftover: list[tuple] = []
     for it in unnumbered:
-        compatible = [cl for cl in clusters
-                      if any(_name_compatible(it[3], x[3]) for x in cl)]
-        if len(compatible) == 1:        # único componente compatível → anexa
-            compatible[0].append(it)
+        # clique-safe: só anexa a um clique numerado se for compatível com TODOS
+        # os membros dele (não basta bater com UM nome do clique).
+        compatible = [k for k, (cl, _amb) in enumerate(clusters)
+                      if all(_name_compatible(it[3], x[3]) for x in cl)]
+        if len(compatible) == 1:        # único clique compatível → anexa
+            clusters[compatible[0]][0].append(it)
         else:                           # 0 ou >1 → ambíguo, não chuta
             leftover.append(it)
 
     if leftover:                        # sem-número órfãos: agrupam entre si por nome
-        clusters.extend(_name_components(leftover))
+        clusters.extend(_name_cliques(leftover))
     return clusters
 
 
-def _make_card(cset: str, cluster: list[tuple]) -> CrossSourceCard:
+def _make_card(cset: str, cluster: list[tuple], ambiguo: bool = False) -> CrossSourceCard:
     # melhor deal POR fonte = o mais barato daquela fonte (foco em "onde comprar")
     by_source: dict[str, Deal] = {}
     for deal, _cs, _num, _nm in cluster:
@@ -356,6 +389,9 @@ def _make_card(cset: str, cluster: list[tuple]) -> CrossSourceCard:
     has_numbered = any(it[2] for it in cluster)
 
     motivos = []
+    if ambiguo:
+        motivos.append("nome ambíguo (compatível com ≥2 variantes — ex/v) — "
+                       "não fundido, validar manualmente")
     if has_unnumbered and not has_numbered:
         motivos.append("casado só por nome (nenhuma fonte deu número)")
     elif has_unnumbered and has_numbered:
@@ -384,11 +420,11 @@ def group_cross_source(deals: list[Deal]) -> list[CrossSourceCard]:
 
     cards: list[CrossSourceCard] = []
     for cset, group in by_set.items():
-        for cluster in _cluster_within_set(group):
+        for cluster, ambiguo in _cluster_within_set(group):
             distinct_sources = {_canon_source(it[0].fonte) for it in cluster}
             if len(distinct_sources) < 2:
                 continue          # não é cross-source
-            cards.append(_make_card(cset, cluster))
+            cards.append(_make_card(cset, cluster, ambiguo))
 
     # ordena pela margem da COMPRA MAIS BARATA (a oportunidade acionável: é o
     # número que a tabela exibe — comprar onde está mais barato).

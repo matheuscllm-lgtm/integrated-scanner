@@ -145,6 +145,31 @@ def test_variant_suffix_collision_split():
     assert group_cross_source(deals) == []
 
 
+def test_bare_name_does_not_bridge_variants_clique():
+    # REGRESSÃO (bug do union-find, P1): o predicado de nome (subconjunto de
+    # tokens) NÃO é transitivo. "umbreon" ⊆ "umbreon ex" E "umbreon" ⊆ "umbreon
+    # v", mas "umbreon ex" e "umbreon v" são cartas DIFERENTES. Num union-find o
+    # pelado fazia a PONTE e as 3 viravam 1 card ("nome de uma + preço de outra").
+    # Com clustering por CLIQUE, ex e v NUNCA caem no mesmo card mesmo com o pelado.
+    deals = [
+        _deal("MYP", "Umbreon ex", "Prismatic Evolutions", "161", compra_brl=900),
+        _deal("CardTrader", "Umbreon V", "pre", "161", compra_brl=300),
+        _deal("COMC", "Umbreon", "Prismatic Evolutions", "161", compra_brl=500),
+    ]
+    cards = group_cross_source(deals)
+    # nenhum card pode conter ex E v na mesma linha
+    for c in cards:
+        names = {normalize_card_name(d.carta) for d in c.deals_by_source.values()}
+        assert not ({"umbreon ex"} <= names and "umbreon v" in names), (
+            "ex e V não podem ser fundidos no mesmo card")
+    # as três fontes nomeiam coisas distintas/ambíguas → nenhuma fusão silenciosa
+    # de duas variantes diferentes; cada variante específica fica isolada (1 fonte
+    # só → some do cross-source). O resultado NÃO entrega ex+V como uma carta.
+    assert all(c.cheapest_source != "CardTrader" or
+               normalize_card_name(c.cheapest_deal.carta) != "umbreon v"
+               for c in cards if normalize_card_name(c.display_name) == "umbreon ex")
+
+
 def test_multiword_name_collision_split():
     # 'Mr. Mime' vs 'Mr. Rime' no mesmo número → {mr,mime} vs {mr,rime}
     # não-compatíveis → não agrupa (antes, comparar só o 1º token os fundia)
