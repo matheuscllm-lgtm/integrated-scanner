@@ -8,3 +8,6 @@ outputs/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# GSD: hook wiring is environment-specific (hardcoded node path) — regenerate per machine via `npx @opengsd/gsd-core --claude --local`
+.claude/settings.local.json
