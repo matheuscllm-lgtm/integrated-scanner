@@ -374,7 +374,11 @@ def main() -> int:
     ap.add_argument("--skip-scan", action="store_true",
                     help="NÃO roda scanners; só normaliza os outputs já existentes")
     ap.add_argument("--min-margin", type=float, default=MIN_MARGIN_PCT_DEFAULT,
-                    help="corte de margem bruta unificada em PERCENT (default 30)")
+                    help="corte de margem bruta unificada em PERCENT (default 30). "
+                         "PISO EFETIVO de 30%%: CT e MYP filtram a 30%% no scan-time "
+                         "(threshold hardcoded), entao --min-margin < 30 NAO traz "
+                         "deals de 20-30%% dessas fontes - so afrouxa o corte final "
+                         "sobre o que ja passou o scan a 30%%.")
     ap.add_argument("--notorious-only", action="store_true",
                     help="só cartas de Pokémon notórios (lista curada)")
     ap.add_argument("--fx", type=float, default=None,
