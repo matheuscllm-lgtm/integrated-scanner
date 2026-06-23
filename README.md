@@ -3,7 +3,7 @@
 Scanner **integrado** de singles Pokémon: orquestra os 4 scanners existentes
 (MYP, CardTrader, COMC, Liga) como subprocessos caixa-preta, unifica os
 resultados num schema único e entrega **uma tabela markdown completa no chat**
-— com flag ⭐ para Pokémon notórios e score heurístico de valorização (0-100).
+— com flag ⭐ para Pokémon notórios.
 
 📖 **Documentação completa e acessível: [CLAUDE.md](CLAUDE.md)** (o que é,
 como rodar, armadilhas de threshold, status honesto de cada fonte).
