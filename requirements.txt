@@ -9,4 +9,4 @@ openpyxl>=3.1        # engine xlsx do pandas (read/write)
 # Camada API HTTP (APIs expostas E alimentadas) — api.py / api_store.py.
 fastapi>=0.110
 uvicorn[standard]>=0.27
-httpx>=0.27          # cliente usado pelo TestClient do FastAPI (e smoke da API)
+httpx2               # TestClient do Starlette/FastAPI (httpx foi descontinuado pro TestClient)
