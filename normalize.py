@@ -330,15 +330,18 @@ def myp_row_to_deal(row: dict[str, Any], fx_global: float) -> Deal:
     ref_brl = _num(_col(row, "TCG Player (R$)"))
     fx = fx_global
     rarity = str(_col(row, "Rarity") or "")
-    # Honestidade (espelha MYP v5.14.3): o preço TCG do MYP pode ser REAL
-    # (pokemontcg.io) ou FALLBACK (`.estat-tcg`, uma estimativa do próprio MYP).
-    # O fallback às vezes mapeia a carta errada e infla o "preço TCG" → margem
-    # ILUSÓRIA (ex.: Darumaka R$2867 vs R$60). Fonte canônica = coluna
-    # "TCG Source"; XLSX antigo (pré-v5.14) infere por "TCG US$" (que só o preço
-    # real preenche). Um fallback tem de ir FLAGADO, nunca silencioso.
-    _tcg_src = str(_col(row, "TCG Source") or "").strip()
-    tcg_is_real = ("pokemontcg" in _tcg_src.lower()) if _tcg_src \
-        else _num(_col(row, "TCG US$")) > 0
+    # Honestidade (espelha MYP v5.16): o preço TCG do MYP pode ser REAL
+    # (pokemontcg.io OU tcgcsv) ou FALLBACK (`.estat-tcg`, uma estimativa do
+    # próprio MYP). O fallback às vezes mapeia a carta errada e infla o "preço
+    # TCG" → margem ILUSÓRIA (ex.: Darumaka R$2867 vs R$60). Fonte canônica =
+    # coluna "TCG Source"; XLSX antigo (pré-v5.14) infere por "TCG US$" (que só
+    # o preço real preenche). Um fallback tem de ir FLAGADO, nunca silencioso.
+    # MYP v5.15+ marca o source como "real (tcgcsv)" / "real (pokemontcg)" /
+    # "fallback (.estat-tcg)" — logo real = qualquer string que NÃO seja fallback
+    # (checar por "pokemontcg" sozinho perdia o tcgcsv real, bug corrigido).
+    _tcg_src = str(_col(row, "TCG Source") or "").strip().lower()
+    tcg_is_real = ("fallback" not in _tcg_src and "estat" not in _tcg_src) \
+        if _tcg_src else _num(_col(row, "TCG US$")) > 0
     ref_usd = ref_brl / fx if fx else 0.0
     score, note = compute_valorization(rarity, None, ref_usd)
     deal = Deal(

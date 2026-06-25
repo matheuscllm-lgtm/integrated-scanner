@@ -177,6 +177,17 @@ def test_myp_real_price_no_fallback_note():
     assert not _has_fallback_note(d), f"deal real não devia ter nota de fallback: {d.notas}"
 
 
+def test_myp_real_tcgcsv_no_fallback_note():
+    # Regressão: MYP v5.15+ marca o source como "real (tcgcsv)" (NÃO contém
+    # "pokemontcg"). O leitor antigo checava só "pokemontcg" e flagava esses
+    # deals REAIS como fallback ilusório. Real = qualquer source que não seja
+    # fallback/estat.
+    row = dict(MYP_ROW, **{"TCG Source": "real (tcgcsv)", "TCG US$": 86.0})
+    d = myp_row_to_deal(row, FX)
+    assert not _has_fallback_note(d), \
+        f"deal real (tcgcsv) não devia ter nota de fallback: {d.notas}"
+
+
 def test_myp_fallback_price_gets_untrustworthy_note_first():
     # Preço FALLBACK (.estat-tcg) → nota de MARGEM NÃO-CONFIÁVEL, e em PRIMEIRO
     # lugar (é a ressalva mais importante: a margem pode ser ilusória — Darumaka).
