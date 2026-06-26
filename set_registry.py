@@ -87,6 +87,19 @@ _REGISTRY: list[SetEntry] = [
     SetEntry("PAR", "Paradox Rift",         "SV", "PAR", "Paradox Rift",    "par", (COMC_ERA_RECENT, "PAR")),
     SetEntry("OBF", "Obsidian Flames",      "SV", "OBF", "Obsidian Flames", "sv3", (COMC_ERA_RECENT, "OBF")),
     SetEntry("PAL", "Paldea Evolved",       "SV", "PAL", "Paldea Evolved",  "sv2", (COMC_ERA_RECENT, "PAL")),
+    # ── Sword & Shield: os 4 sets mais recentes da era SWSH (fecham os "20").
+    #   CT: código VERIFICADO via API /expansions (lorg/sit/crz/astr).
+    #   Liga: LOR e STB constam no alias map de normalização; CRZ/ASR ausentes → None.
+    #   COMC: sem slug p/ nenhum em comc_set_slugs.json → comc=None (não cobre).
+    #   MYP: nome canônico EN (mesmo padrão das entradas SV). Subtítulos ÚNICOS →
+    #   substring errada = NO-OP inofensivo (casa 0 edições), NUNCA escaneia set
+    #   errado (≠ "Scarlet & Violet" base, que colidiria com todos os SV — por isso
+    #   o base NÃO entra). Confirmar os títulos no próximo run MYP sem bloqueio CF
+    #   (mypcards.com devolveu 403 neste IP de datacenter após o scan pesado de hoje).
+    SetEntry("LOR", "Lost Origin",          "SWSH", "LOR", "Lost Origin",     "lorg", None),
+    SetEntry("SIT", "Silver Tempest",       "SWSH", "STB", "Silver Tempest",  "sit",  None),
+    SetEntry("CRZ", "Crown Zenith",         "SWSH", None,  "Crown Zenith",    "crz",  None),
+    SetEntry("ASR", "Astral Radiance",      "SWSH", None,  "Astral Radiance", "astr", None),
     # ── Mega Evolution (SÓ MYP — ver docstring; Liga/CT/COMC = None) ───────────
     SetEntry("ASH", "Ascended Heroes",      "ME", None, "Ascended Heroes",  None, None),
     SetEntry("PFO", "Perfect Order",        "ME", None, "Perfect Order",    None, None),
