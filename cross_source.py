@@ -133,8 +133,8 @@ def _name_compatible(a: str, b: str) -> bool:
     return ta <= tb or tb <= ta
 
 
-def _name_components(items: list[tuple]) -> list[list[tuple]]:
-    """Particiona itens em CLIQUES de nome COMPATÍVEL.
+def _name_cliques(items: list[tuple]) -> list[tuple[list[tuple], bool]]:
+    """Particiona itens em CLIQUES de nome COMPATÍVEL; devolve (clique, ambiguo).
 
     Por que CLIQUE e não componente-conexo (union-find): `_name_compatible`
     (subconjunto de tokens) NÃO é transitivo. Ex.: o nome PELADO "umbreon" é
@@ -153,12 +153,7 @@ def _name_components(items: list[tuple]) -> list[list[tuple]]:
          cluster com que é compatível. Se ele é compatível com ≥2 clusters
          MUTUAMENTE incompatíveis (ambíguo), NÃO é fundido em nenhum: vira seu
          próprio cluster, marcado `validar` depois (vínculo ambíguo > linha
-         enganosa silenciosa)."""
-    return [cl for cl, _amb in _name_cliques(items)]
-
-
-def _name_cliques(items: list[tuple]) -> list[tuple[list[tuple], bool]]:
-    """Como _name_components, mas devolve (clique, ambiguo) por cluster.
+         enganosa silenciosa).
 
     `ambiguo=True` marca um cluster nascido de um item cujo nome batia com ≥2
     cliques MUTUAMENTE incompatíveis (ex.: o pelado "umbreon" diante de "umbreon
