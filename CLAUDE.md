@@ -275,10 +275,12 @@ que passou no corte de 30% do scanner original é perdido na unificação.
 
 **Sidecar de confiança da Liga (`outputs/liga_trusted.json`):** quando um run
 do integrado roda a Liga com sucesso a partir de CSV real, ele grava esse
-sidecar apontando o report gerado. É o mecanismo que separa report real de
-report mock; em `--skip-scan`, sem sidecar/report deste run, a Liga sai
-"indisponível" com instrução — a saída de escape é o `--liga-report` (aponta
-manualmente um report que você SABE que veio de CSV real).
+sidecar apontando o report gerado — um **registro de auditoria** (o código só
+o ESCREVE; nenhuma releitura o consulta). Quem separa report real de mock na
+prática é o gate do `--skip-scan`: sem report da Liga produzido no próprio
+run, a Liga sai "indisponível" com instrução — a saída de escape é o
+`--liga-report` (você aponta manualmente um report que SABE que veio de CSV
+real; o sidecar serve para conferir isso).
 
 ## Colunas da tabela unificada
 
