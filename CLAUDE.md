@@ -332,7 +332,7 @@ nota de limitação em vez de veredito.
 python -m pytest tests/ -q
 ```
 
-88 testes (registry/escopo, cross-source, matcher, margem, status, API/store).
+89 testes (registry/escopo, cross-source, matcher, margem, status, API/store).
 
 ⚠️ **Use `python -m pytest`, nunca o `pytest` pelado**: o `python -m` adiciona a
 raiz do repo ao sys.path, então `import api`/`import cross_source` resolvem; com
@@ -357,7 +357,7 @@ notorious.py        lista curada de Pokémon notórios + matcher por palavra int
 delivery.py         tabela markdown completa + xlsx de apoio + resumo por fonte + seção cross-source
 api_store.py        store JSON unificado (alimentado pelo run; lido pela API)
 api.py              API HTTP FastAPI (expõe deals/sets/status; dispara scan)
-tests/              88 testes (registry/escopo, cross-source, matcher, margem, status, API/store)
+tests/              89 testes (registry/escopo, cross-source, matcher, margem, status, API/store)
 outputs/            resultados, logs e deals_store.json (não versionado)
 ```
 
