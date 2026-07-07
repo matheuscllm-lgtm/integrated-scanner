@@ -46,6 +46,16 @@ from set_registry import (UnknownSetError, catalog, known_canonicals,
 
 HERE = Path(__file__).resolve().parent
 VALID_SOURCES = {"myp", "ct", "comc", "liga"}
+# Rótulo `fonte` que o pipeline grava no deal (normalize.py: "MYP",
+# "CardTrader", "COMC", "Liga") → chave curta de fonte usada na API. Sem este
+# mapa, ?source=ct comparava "ct" == "cardtrader" e devolvia sempre 0 linhas.
+_FONTE_TO_KEY = {"myp": "myp", "cardtrader": "ct", "ct": "ct",
+                 "comc": "comc", "liga": "liga"}
+
+
+def _source_key(fonte: str | None) -> str:
+    f = (fonte or "").strip().lower()
+    return _FONTE_TO_KEY.get(f, f)
 # Fontes HEADFUL (abrem Chrome) — NÃO entram no default do /scan via API por
 # segurança: rodar headful sem supervisão trava. Opt-in explícito no corpo.
 HEADFUL_SOURCES = {"comc", "liga"}
@@ -158,7 +168,7 @@ def deals(
         src = source.strip().lower()
         if src not in VALID_SOURCES:
             raise HTTPException(400, f"source inválida: {source} (válidas: {sorted(VALID_SOURCES)})")
-        rows = [d for d in rows if (d.get("fonte") or "").lower() == src]
+        rows = [d for d in rows if _source_key(d.get("fonte")) == src]
     if set_:
         # set_ pode ser um código canônico (PRE) ou um pedaço do nome. Se for
         # canônico conhecido, casamos pelo NOME do set (os deals guardam o nome

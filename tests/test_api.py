@@ -98,6 +98,29 @@ def test_deals_filter_source(client, seeded):
     assert r.json()["count"] == 1 and r.json()["deals"][0]["fonte"] == "CT"
 
 
+def test_deals_filter_source_real_pipeline_labels(client, monkeypatch):
+    """Regressão: o pipeline REAL grava fonte="CardTrader" (normalize.py), não
+    "CT". O filtro ?source=ct comparava igualdade crua e devolvia 0 linhas em
+    qualquer store de produção. O mapa _FONTE_TO_KEY conserta isso."""
+    deals = [
+        Deal(fonte="CardTrader", carta="Dusclops", set_name="Shrouded Fable",
+             numero="069", margem_pct=40.0),
+        Deal(fonte="MYP", carta="Sinistcha ex", set_name="SV06: Twilight Masquerade",
+             numero="210", margem_pct=95.2),
+        Deal(fonte="Liga", carta="Umbreon ex", set_name="Prismatic Evolutions",
+             margem_pct=33.0),
+    ]
+    store = api_store.build_store(
+        deals, [SourceStatus(source="CT", status="ok")],
+        scope=["SFA"], fx=5.20, min_margin=30.0, stamp="TEST_STAMP")
+    monkeypatch.setattr(api_store, "load_store", lambda *a, **k: store)
+    r = client.get("/deals", params={"source": "ct"})
+    assert r.json()["count"] == 1
+    assert r.json()["deals"][0]["fonte"] == "CardTrader"
+    r = client.get("/deals", params={"source": "liga"})
+    assert r.json()["count"] == 1 and r.json()["deals"][0]["fonte"] == "Liga"
+
+
 def test_deals_filter_min_margin(client, seeded):
     r = client.get("/deals", params={"min_margin": 50})
     assert r.json()["count"] == 1  # só Sinistcha 95.2
