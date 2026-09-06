@@ -16,6 +16,9 @@ Cada fonte precisa do seu repositório, dependências e credenciais. Veja
 - Referências clicáveis, carta com número, dois links e todas as linhas em baldes.
 - Comparação conservadora por set, número, variante, condição e idioma.
 - Status explícito de sucesso, parcial e falha; releitura histórica separada.
+- MYP com intervalo de 3 segundos entre consultas, configurável por `--myp-delay`.
+  O limite de execução cresce com o número de filtros de edição (Grupo 2: 7 horas);
+  `--timeout` permite escolher outro limite. Isso não é uma previsão de duração.
 - Margem bruta, sem taxas; o scanner não decide compras.
 
 [DELIVERY_CHAT.md](DELIVERY_CHAT.md) rege a entrega: resultados no chat,

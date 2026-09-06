@@ -41,6 +41,12 @@ MYP aceita `--myp-provider auto|tcgcsv|pokemontcg`. TCGCSV é referência de dum
 não cotação em tempo real; a entrega não inventa a data de atualização do dump.
 Cada execução CT usa um diretório de estado novo e `--no-cache`.
 Cada execução MYP usa saída nova; não retoma checkpoints de solicitações anteriores.
+O integrado passa `--delay 3.0` ao MYP para reduzir a frequência de consultas;
+`--myp-delay <segundos>` permite configurar um intervalo positivo e finito.
+`Retry-After` continua sendo respeitado. O orçamento MYP para um escopo finito
+é o maior entre duas horas e 30 minutos por filtro de edição: Grupo 2 recebe
+sete horas. Isso é limite de execução, não previsão de duração. `--timeout`
+explícito prevalece, inclusive quando o operador precisa de um limite maior.
 O MYP atualizado salva progresso a cada dez produtos e ao receber falha persistente,
 respeita `Retry-After` e gera XLSX parcial com código 2. Retomada nativa com
 `--resume` deve ser explícita, na mesma solicitação e saída, nunca preço de outro scan.
@@ -103,7 +109,7 @@ python -m uvicorn api:app --host 127.0.0.1 --port 8077
 
 `GET /health`, `/sets`, `/sources`, `/deals`, `/status` consultam a API.
 `POST /scan` aceita sets, sources, min_margin, ct_provider, myp_provider e
-myp_max_products. COMC exige allow_comc; Liga exige collect_liga.
+myp_max_products e myp_delay_s. COMC exige allow_comc; Liga exige collect_liga.
 O store mantém todos os baldes. Nenhuma publicação externa é feita pelo scanner.
 
 Reprocessamento técnico explícito, **sem tratar como coleta atual**:
