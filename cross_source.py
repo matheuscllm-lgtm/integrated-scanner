@@ -205,6 +205,7 @@ def _build_set_lookups():
 
 
 _BY_NAME, _BY_CT, _BY_LIGA, _BY_CANON, _BY_COMC, _MYP_SUBS = _build_set_lookups()
+_BY_CT.update({"sv2": "PAL", "sv3": "OBF"})  # historical exports only
 
 
 def canonical_set_of(deal: Deal) -> Optional[str]:
@@ -240,6 +241,13 @@ def canonical_set_of(deal: Deal) -> Optional[str]:
     if "card" in fonte or fonte == "ct":
         if raw.lower() in _BY_CT:
             return _BY_CT[raw.lower()]
+        exported = re.fullmatch(r"(.+?)\s*\(([^()]+)\)", raw)
+        if exported:
+            name, code = exported.groups()
+            canonical = _BY_CT.get(code.strip().lower())
+            # Reject contradictory name/code pairs, never guess an alias.
+            if canonical and _BY_NAME.get(_norm(name)) == canonical:
+                return canonical
     if "comc" in fonte:
         if up in _BY_COMC:
             return _BY_COMC[up]
@@ -384,6 +392,14 @@ def _make_card(cset: str, cluster: list[tuple], ambiguo: bool = False) -> CrossS
     has_numbered = any(it[2] for it in cluster)
 
     motivos = []
+    for deal in by_source.values():
+        motivos.extend(deal.review_reasons)
+        if not deal.variant:
+            motivos.append("variante não informada")
+        if not deal.condition or not deal.language:
+            motivos.append("condição/idioma não informados")
+        if deal.price_status != "real":
+            motivos.append("referência " + deal.price_status)
     if ambiguo:
         motivos.append("nome ambíguo (compatível com ≥2 variantes — ex/v) — "
                        "não fundido, validar manualmente")
@@ -399,7 +415,7 @@ def _make_card(cset: str, cluster: list[tuple], ambiguo: bool = False) -> CrossS
         display_number=display_number,
         deals_by_source=by_source,
         validar=bool(motivos),
-        motivo="; ".join(motivos),
+        motivo="; ".join(dict.fromkeys(motivos)),
     )
 
 
@@ -409,17 +425,35 @@ def group_cross_source(deals: list[Deal]) -> list[CrossSourceCard]:
     Só retorna cartas com set canônico resolvido E ≥2 fontes distintas. Ordena
     por maior margem desc (melhor oportunidade primeiro). Cartas de 1 fonte só,
     ou com set não-resolvido, NÃO aparecem aqui (continuam na tabela plana)."""
-    by_set: dict[str, list[tuple]] = defaultdict(list)
+    by_set: dict[tuple, list[tuple]] = defaultdict(list)
     for it in _annotate(deals):
-        by_set[it[1]].append(it)
+        d = it[0]
+        # Finish cannot be inferred from card number/name. Split known
+        # finishes below; unknown may join only one unambiguous candidate.
+        condition = d.condition.strip().lower()
+        condition = "nm" if condition == "near mint" else condition
+        language = d.language.strip().lower()
+        language = "en" if language == "english" else language
+        key = (it[1], condition, language)
+        by_set[key].append(it)
 
     cards: list[CrossSourceCard] = []
-    for cset, group in by_set.items():
+    for key, group in by_set.items():
+        cset = key[0]
         for cluster, ambiguo in _cluster_within_set(group):
-            distinct_sources = {_canon_source(it[0].fonte) for it in cluster}
-            if len(distinct_sources) < 2:
-                continue          # não é cross-source
-            cards.append(_make_card(cset, cluster, ambiguo))
+            finishes = defaultdict(list)
+            unknown = []
+            for item in cluster:
+                variant = re.sub(r"[\s_-]", "", item[0].variant.lower())
+                (finishes[variant] if variant else unknown).append(item)
+            if len(finishes) == 1:
+                next(iter(finishes.values())).extend(unknown)
+            elif unknown:
+                finishes[""] = unknown  # never bridge two known finishes
+            for finish_cluster in finishes.values():
+                distinct_sources = {_canon_source(it[0].fonte) for it in finish_cluster}
+                if len(distinct_sources) >= 2:
+                    cards.append(_make_card(cset, finish_cluster, ambiguo))
 
     # ordena pela margem da COMPRA MAIS BARATA (a oportunidade acionável: é o
     # número que a tabela exibe — comprar onde está mais barato).

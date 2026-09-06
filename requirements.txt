@@ -4,6 +4,7 @@
 
 # Leitura/escrita dos XLSX de cada fonte + tabela unificada de apoio.
 pandas>=2.0
+requests>=2.31       # consulta atual de câmbio, sem fallback para preços antigos
 openpyxl>=3.1        # engine xlsx do pandas (read/write)
 
 # Camada API HTTP (APIs expostas E alimentadas) — api.py / api_store.py.

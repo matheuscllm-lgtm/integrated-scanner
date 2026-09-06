@@ -156,14 +156,12 @@ def test_myp_link_tcg_from_column():
 
 
 def test_myp_link_tcg_fallback_search():
-    # XLSX antigo (pré-v5.11.2) sem a coluna → busca por nome SEM o (NNN/MMM)
+    # Missing evidence must stay missing, never a generic search masquerading as reference.
     d = myp_row_to_deal(MYP_ROW, FX)
-    assert "tcgplayer.com/search" in d.link_tcg
-    assert "Mega+Gengar+ex" in d.link_tcg
-    assert "269" not in d.link_tcg
+    assert d.link_tcg == ""
     # coluna presente mas vazia (NaN do pandas) → também cai no fallback
     d2 = myp_row_to_deal(dict(MYP_ROW, **{"TCG URL": float("nan")}), FX)
-    assert "tcgplayer.com/search" in d2.link_tcg
+    assert d2.link_tcg == ""
 
 
 def _has_fallback_note(deal):
@@ -222,7 +220,9 @@ def test_read_liga_keeps_only_approved(tmp_path):
     p = tmp_path / "report_x.json"
     p.write_text(json.dumps(rows), encoding="utf-8")
     deals = read_liga(p, 5.2)
-    assert [d.carta for d in deals] == ["Charizard ex"]
+    assert [d.carta for d in deals] == ["Charizard ex", "Applin", "Sem Status"]
+    assert deals[1].validation_status == "rejected"
+    assert deals[2].review_reasons
 
 
 def test_comc_run_summaries(tmp_path):

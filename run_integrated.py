@@ -35,6 +35,7 @@ import subprocess
 import sys
 import time
 import traceback
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -159,8 +160,30 @@ def _comc_phase2_status(summaries: dict[str, dict]) -> tuple[str, str]:
 
 
 def _mark_no_output(status_obj) -> None:
-    status_obj.status = "indisponível"
-    status_obj.detail = "nenhum output encontrado"
+    if not status_obj.status.startswith(("falhou", "timeout", "parcial")):
+        status_obj.status = "indisponível"
+    status_obj.detail = "; ".join(filter(None, [status_obj.detail, "nenhum output desta execução"]))
+
+
+def run_exit_code(statuses: list[SourceStatus]) -> int:
+    active = [s for s in statuses if not s.status.startswith("pulado (escopo)")]
+    ok = [s for s in active if s.status.startswith("ok")]
+    if active and len(ok) == len(active):
+        return 0
+    return 2 if ok or any(s.status.startswith("parcial") for s in active) else 1
+
+
+def fresh_fx() -> float:
+    """Fresh conversion only; 0 means unavailable, never an invented quote."""
+    import requests
+    try:
+        response = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", timeout=15)
+        response.raise_for_status()
+        value = float(response.json()["rates"]["BRL"])
+        import math
+        return value if math.isfinite(value) and value > 0 else 0.0
+    except Exception:
+        return 0.0
 
 
 def _run_step(name: str, cmd: list[str], cwd: Path, timeout_s: int,
@@ -181,14 +204,16 @@ def _run_step(name: str, cmd: list[str], cwd: Path, timeout_s: int,
         dur = time.time() - t0
         if proc.returncode == 0:
             return "ok", "", dur
-        return "falhou", f"exit code {proc.returncode} (ver log)", dur
+        if proc.returncode == 2:
+            return "parcial", f"fonte interrompida/incompleta (exit 2; log {log_path.name})", dur
+        return "falhou", f"exit code {proc.returncode} (log {log_path.name})", dur
     except subprocess.TimeoutExpired:
         return "timeout", f"excedeu {timeout_s//60} min", time.time() - t0
     except FileNotFoundError as exc:
         return "falhou", f"executável não encontrado: {exc}", time.time() - t0
 
 
-def scan_ct(scope: object, stamp: str, timeout_s: int) -> tuple[str, str, float, Path | None]:
+def scan_ct(scope: object, stamp: str, timeout_s: int, provider: str = "tcgcsv") -> tuple[str, str, float, Path | None]:
     repo = REPOS["ct"]
     out = repo / "outputs" / f"integrated_{stamp}.xlsx"
     cmd = [str(VENV_PY["ct"]), str(repo / "cardtrader_scanner.py")]
@@ -205,27 +230,29 @@ def scan_ct(scope: object, stamp: str, timeout_s: int) -> tuple[str, str, float,
         note = _skip_note(skipped, "CT não cobre")
     # THRESHOLD EM FRAÇÃO (0.30 = 30%) — convenção do CT, não mudar!
     cmd += ["--threshold", "0.30", "--chase-only", "--validate-top", "30",
-            "--max-consecutive-misses", "40", "--output", str(out)]
+            "--max-consecutive-misses", "40", "--output", str(out),
+            "--provider", provider, "--no-cache", "--state-dir", str(OUT_DIR / "state" / stamp / "ct")]
     status, detail, dur = _run_step("ct", cmd, repo, timeout_s,
                                     LOG_DIR / f"ct_{stamp}.log")
     if note:
         detail = f"{detail}; {note}" if detail else note
     if status == "ok" and out.exists():
-        # postprocess do CT (best-effort): gera o .md/.xlsx no formato CT.
-        post = repo / "outputs" / f"integrated_{stamp}_post.xlsx"
-        _run_step("ct-post", [str(VENV_PY["ct"]), str(repo / "cardtrader_postprocess.py"),
-                              "--input", str(out), "--output", str(post)],
-                  repo, 600, LOG_DIR / f"ct_post_{stamp}.log")
+        # The integrated MyP-format renderer owns delivery; no second report
+        # with different thresholds or additional price lookups is needed.
         return status, detail, dur, out
     return status, detail, dur, (out if out.exists() else None)
 
 
-def scan_myp(scope: object, stamp: str, timeout_s: int) -> tuple[str, str, float, Path | None]:
+def scan_myp(scope: object, stamp: str, timeout_s: int, provider: str = "auto",
+             max_products: int = 0) -> tuple[str, str, float, Path | None]:
     repo = REPOS["myp"]
     out = repo / "results" / f"integrated_{stamp}.xlsx"
     cmd = [str(VENV_PY["myp"]), str(repo / "myp_arbitrage_scanner.py"),
            # THRESHOLD EM PERCENT INTEIRO (30 = 30%) — convenção do MYP!
-           "--threshold", "30", "--min-price", "50", "-o", str(out)]
+           "--threshold", "30", "--min-price", "50", "-o", str(out),
+           "--tcg-source", provider]
+    if max_products:
+        cmd += ["--max-products", str(max_products)]
     note = ""
     if not is_full(scope):  # full = sem --editions (varre catálogo inteiro)
         myp_eds, skipped = to_myp_editions(scope)
@@ -235,6 +262,12 @@ def scan_myp(scope: object, stamp: str, timeout_s: int) -> tuple[str, str, float
         note = _skip_note(skipped, "MYP não cobre")
     status, detail, dur = _run_step("myp", cmd, repo, timeout_s,
                                     LOG_DIR / f"myp_{stamp}.log")
+    sidecar = Path(str(out) + ".status.json")
+    if status == "parcial" and sidecar.exists():
+        try:
+            detail += "; " + str(json.loads(sidecar.read_text(encoding="utf-8")).get("reason", ""))
+        except (OSError, ValueError):
+            pass
     if note:
         detail = f"{detail}; {note}" if detail else note
     return status, detail, dur, (out if out.exists() else None)
@@ -284,6 +317,14 @@ def scan_comc(scope: object, stamp: str, timeout_s: int) -> tuple[str, str, floa
     outs = [p for p in latest_comc_outputs(repo)
             if any(f"comc_deals_{e}_latest" in p.name for e in scanned_eras)
             and p.stat().st_mtime >= t_start]
+    if overall == "ok" and not outs:
+        summaries = comc_run_summaries(repo)
+        fresh_zero = all(
+            summaries.get(era, {}).get("count") == 0
+            and (repo / "results" / f"comc_deals_{era}_latest.json").stat().st_mtime >= t_start
+            for era in scanned_eras)
+        if fresh_zero:
+            overall = "ok (0 deals)"
     return overall, "; ".join(details), total_dur, outs
 
 
@@ -324,15 +365,22 @@ def scan_liga(scope: object, stamp: str, timeout_s: int,
         lendo o CSV que houver). É opt-in justamente por ser headful."""
     repo = REPOS["liga"]
     collect_note = ""
+    started = time.time()
+    if not collect:
+        return "indisponível", "coleta nova da Liga exige --collect-liga", 0.0, None
     if collect:
         cstatus, cdetail = collect_liga(scope, stamp)
         collect_note = f"coleta: {cstatus} ({cdetail})" if cdetail else f"coleta: {cstatus}"
+        if not cstatus.startswith("ok"):
+            return cstatus, cdetail, 0.0, None
     csv_real = repo / "data" / "liga_offers.csv"
     if not csv_real.exists():
         base = ("sem data/liga_offers.csv; rode o coletor ao vivo no repo da Liga "
                 "(src/collect_liga_live.py --sets ... --no-report) ou use "
                 "--collect-liga, e re-rode")
         return ("indisponível", f"{base}; {collect_note}" if collect_note else base, 0.0, None)
+    if csv_real.stat().st_mtime < started:
+        return "falhou", "coleta não produziu CSV novo", 0.0, None
     stale = _staleness_warning(csv_real.stat().st_mtime)
     wanted = [] if is_full(scope) else to_liga_names(scope)
     coverage = "" if collect else _liga_coverage_note(csv_real, wanted)
@@ -345,7 +393,7 @@ def scan_liga(scope: object, stamp: str, timeout_s: int,
             detail = f"{extra}; {detail}" if detail else extra
     reports = sorted((repo / "reports").glob("report_*.json"),
                      key=lambda p: p.stat().st_mtime)
-    out = reports[-1] if status == "ok" and reports else None
+    out = reports[-1] if status == "ok" and reports and reports[-1].stat().st_mtime >= started else None
     if out:  # sidecar marcando que ESTE report veio de CSV real (não mock)
         (OUT_DIR / "liga_trusted.json").write_text(
             json.dumps({"report": str(out), "stamp": stamp}), encoding="utf-8")
@@ -355,7 +403,7 @@ def scan_liga(scope: object, stamp: str, timeout_s: int,
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Scanner integrado de singles Pokémon (MYP+CT+COMC+Liga)")
-    ap.add_argument("--profile", choices=["quick", "full"], default=None,
+    ap.add_argument("--profile", choices=["quick", "full", "group2"], default=None,
                     help="quick = principais sets SV+ME; full = catálogo inteiro "
                          "(HORAS). Default quick. Mutuamente exclusivo com --sets.")
     ap.add_argument("--sets", type=str, default=None,
@@ -365,33 +413,40 @@ def main() -> int:
                          "aceita um profile (quick/full). Mutuamente exclusivo com "
                          "--profile.")
     ap.add_argument("--collect-liga", action="store_true",
-                    help="dispara a COLETA ao vivo da Liga (HEADFUL, abre Chrome) "
-                         "pros sets do escopo ANTES de ler. Opt-in: sem isto, a "
-                         "Liga só consome o CSV existente e avisa se não cobre o "
-                         "escopo. NÃO use sozinho de madrugada sem supervisão.")
-    ap.add_argument("--sources", default="myp,ct,comc,liga",
+                    help="coleta nova obrigatória para executar a Liga (HEADFUL, abre Chrome)")
+    ap.add_argument("--sources", default="myp,ct",
                     help="fontes, separadas por vírgula (myp,ct,comc,liga)")
     ap.add_argument("--skip-scan", action="store_true",
                     help="NÃO roda scanners; só normaliza os outputs já existentes")
     ap.add_argument("--min-margin", type=float, default=MIN_MARGIN_PCT_DEFAULT,
-                    help="corte de margem bruta unificada em PERCENT (default 30). "
-                         "PISO EFETIVO de 30%%: CT e MYP filtram a 30%% no scan-time "
-                         "(threshold hardcoded), entao --min-margin < 30 NAO traz "
-                         "deals de 20-30%% dessas fontes - so afrouxa o corte final "
-                         "sobre o que ja passou o scan a 30%%.")
+                    help="corte unificado em percent sobre a compra; fontes preservam seus cortes próprios. Linhas abaixo do corte ficam no diagnóstico.")
     ap.add_argument("--notorious-only", action="store_true",
                     help="só cartas de Pokémon notórios (lista curada)")
     ap.add_argument("--fx", type=float, default=None,
-                    help="câmbio USD→BRL p/ fontes sem FX próprio "
-                         "(default: inferido do output CT; fallback 5.20)")
+                    help="câmbio explícito para fontes sem FX próprio; padrão = consulta nova, nunca cotação antiga")
     ap.add_argument("--timeout", type=int, default=None,
                     help="sobrescreve o timeout (segundos) de CADA fonte")
     ap.add_argument("--liga-report", type=str, default=None,
                     help="(skip-scan) caminho de um report da Liga vindo de CSV REAL; "
                          "sem isso a Liga é pulada (reports antigos são mock)")
+    ap.add_argument("--ct-provider", choices=["tcgcsv", "pokemontcg", "justtcg"], default="tcgcsv")
+    ap.add_argument("--myp-provider", choices=["auto", "tcgcsv", "pokemontcg"], default="auto")
+    ap.add_argument("--myp-max-products", type=int, default=0,
+                    help="diagnóstico: limite de produtos por edição, 0 = todos")
+    ap.add_argument("--ct-output", type=Path, help="arquivo explícito para releitura histórica (--skip-scan)")
+    ap.add_argument("--myp-output", type=Path, help="arquivo explícito para releitura histórica (--skip-scan)")
     args = ap.parse_args()
 
-    sources = [s.strip().lower() for s in args.sources.split(",") if s.strip()]
+    sources = list(dict.fromkeys(s.strip().lower() for s in args.sources.split(",") if s.strip()))
+    import math
+    if not sources or not math.isfinite(args.min_margin) or args.min_margin < 0:
+        ap.error("fontes não podem ser vazias; margem deve ser finita e não negativa")
+    if args.fx is not None and (not math.isfinite(args.fx) or args.fx <= 0):
+        ap.error("--fx deve ser finito e positivo")
+    if args.myp_max_products < 0 or (args.timeout is not None and args.timeout <= 0):
+        ap.error("limite de produtos deve ser não negativo; timeout deve ser positivo")
+    if not args.skip_scan and (args.ct_output or args.myp_output or args.liga_report):
+        ap.error("arquivos explícitos só podem ser usados com --skip-scan (histórico)")
     bad = [s for s in sources if s not in REPOS]
     if bad:
         ap.error(f"fontes desconhecidas: {bad} (válidas: myp, ct, comc, liga)")
@@ -430,13 +485,11 @@ def main() -> int:
               f"fonte (MYP {TIMEOUTS['myp']['quick']//60} min etc.); escopos "
               f"grandes podem estourar — considere --timeout <segundos>.")
 
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f") + "_" + uuid.uuid4().hex[:6]
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    fx_global = args.fx or infer_fx_from_ct() or FX_FALLBACK
-    fx_origin = ("--fx" if args.fx else
-                 "inferido do output CT" if fx_global != FX_FALLBACK else
-                 "fallback documentado")
+    fx_global = args.fx or (fresh_fx() if not args.skip_scan else 0.0)
+    fx_origin = "--fx" if args.fx else "consulta atual" if fx_global else "indisponível; sem fallback"
     print(f"FX global USD→BRL: {fx_global:.3f} ({fx_origin})")
 
     statuses: list[SourceStatus] = []
@@ -450,9 +503,9 @@ def main() -> int:
         timeout_s = args.timeout or TIMEOUTS[src][timeout_profile]
         try:
             if src == "ct":
-                st, det, dur, out = scan_ct(scope, stamp, timeout_s)
+                st, det, dur, out = scan_ct(scope, stamp, timeout_s, args.ct_provider)
             elif src == "myp":
-                st, det, dur, out = scan_myp(scope, stamp, timeout_s)
+                st, det, dur, out = scan_myp(scope, stamp, timeout_s, args.myp_provider, args.myp_max_products)
             elif src == "comc":
                 st, det, dur, out = scan_comc(scope, stamp, timeout_s)
             else:
@@ -463,6 +516,7 @@ def main() -> int:
             traceback.print_exc(file=sys.stderr)
         produced[src] = out
         statuses.append(SourceStatus(source=src.upper(), status=st, detail=det,
+                                     collected_at=datetime.now().astimezone().isoformat(),
                                      duration_s=dur,
                                      output_path=str(out) if out and not isinstance(out, list)
                                      else "; ".join(str(p) for p in out) if out else ""))
@@ -475,7 +529,8 @@ def main() -> int:
     for src in sources:
         status_obj = next((s for s in statuses if s.source == src.upper()), None)
         if status_obj is None:
-            status_obj = SourceStatus(source=src.upper(), status="pulado (skip-scan)")
+            status_obj = SourceStatus(source=src.upper(), status="pulado (skip-scan)",
+                                      mode="historical", detail="RELEITURA HISTÓRICA, não é coleta atual")
             statuses.append(status_obj)
         # Fonte fora do escopo desta run NÃO lê output antigo (senão a tabela
         # mostraria deals stale de um scan anterior, fora do escopo pedido).
@@ -485,16 +540,22 @@ def main() -> int:
             src_deals = []
             if src in readers:
                 finder, reader = readers[src]
-                path = produced.get(src) or finder()
+                path = ({"ct": args.ct_output, "myp": args.myp_output}.get(src)
+                        if args.skip_scan else produced.get(src))
+                if not args.skip_scan and not status_obj.status.startswith(("ok", "parcial")):
+                    continue
                 if path:
                     src_deals = reader(Path(path), fx_global)
                     status_obj.output_path = str(path)
+                    if args.skip_scan:
+                        from datetime import timezone
+                        status_obj.collected_at = datetime.fromtimestamp(Path(path).stat().st_mtime, timezone.utc).isoformat()
                     if status_obj.status.startswith("pulado"):
-                        status_obj.status = "ok (output existente)"
+                        status_obj.status = "ok (histórico explícito)"
                 else:
                     _mark_no_output(status_obj)
             elif src == "comc":
-                paths = produced.get(src) or latest_comc_outputs()
+                paths = produced.get(src) or []
                 if paths:
                     for p in paths:
                         src_deals += read_comc(Path(p), fx_global)
@@ -504,14 +565,8 @@ def main() -> int:
                 else:
                     # CSV vazio ≠ scan ausente: o sidecar JSON com count==0
                     # prova run bem-sucedido sem deals ("ok (0 deals)").
-                    st, det = _comc_phase2_status(comc_run_summaries())
-                    if status_obj.status in ("falhou", "timeout"):
-                        # scan DESTE run falhou — não mascarar; só anexa.
-                        status_obj.detail = (f"{status_obj.detail}; {det}"
-                                             if status_obj.detail else det)
-                    else:
-                        status_obj.status = st
-                        status_obj.detail = det
+                    if status_obj.status != "ok (0 deals)":
+                        _mark_no_output(status_obj)
             elif src == "liga":
                 path = produced.get(src)
                 if not path and args.liga_report:
@@ -529,6 +584,11 @@ def main() -> int:
                         "integrado SEM --skip-scan, ou aponte --liga-report pra um "
                         "report gerado de CSV real (reports MOCK não entram)")
             status_obj.deals_raw = len(src_deals)
+            for deal in src_deals:
+                if status_obj.status.startswith("parcial"):
+                    deal.review_reasons.append("coleta parcial — cobertura incompleta")
+                if args.skip_scan:
+                    deal.review_reasons.append("releitura histórica — preço não renovado")
             kept = filter_deals(src_deals, args.min_margin, args.notorious_only)
             status_obj.deals_kept = len(kept)
             deals.extend(src_deals)
@@ -538,26 +598,40 @@ def main() -> int:
             traceback.print_exc(file=sys.stderr)
 
     # ── fase 3: entrega ─────────────────────────────────────────────────
-    final = filter_deals(deals, args.min_margin, args.notorious_only)
-    md = build_markdown(final, statuses, fx_global, args.min_margin,
-                        args.notorious_only)
+    visible = [d for d in deals if not args.notorious_only or d.notorio]
+    title = "Scanner integrado — formato MyP Cards"
+    if args.skip_scan:
+        title += " — RELEITURA HISTÓRICA (não é coleta atual)"
+    if args.myp_max_products:
+        title += f" — DIAGNÓSTICO LIMITADO ({args.myp_max_products} produtos/edição MYP)"
+    md = build_markdown(visible, statuses, fx_global, args.min_margin,
+                        args.notorious_only, title=title)
     # Seção ADITIVA: a mesma carta em ≥2 fontes, preço lado a lado (não substitui
     # a tabela plana acima — regra do operador é mostrar TODOS os deals).
-    cross = group_cross_source(final)
+    cross = group_cross_source([d for d in visible if d.compra_brl > 0 and d.ref_brl > 0
+                               and d.validation_status not in {"STALE", "API_ERROR", "PRICE_CHANGED", "rejected"}])
     md += "\n" + build_cross_source_markdown(cross, args.min_margin)
     md_path = OUT_DIR / f"integrated_{stamp}.md"
     md_path.write_text(md, encoding="utf-8")
     xlsx_path = OUT_DIR / f"integrated_{stamp}.xlsx"
-    write_xlsx(final, xlsx_path)
+    write_xlsx(visible, xlsx_path)
     # ── ALIMENTA o store JSON que a API HTTP expõe (api.py). Falha aqui NUNCA
     # derruba a entrega no chat — é subproduto pra integração via API.
     try:
-        scope_json = "full" if is_full(scope) else [e.canonical for e in scope]
-        store = build_store(final, statuses, scope=scope_json, fx=fx_global,
+        scope_json = "historical: unknown" if args.skip_scan else "full" if is_full(scope) else [e.canonical for e in scope]
+        store = build_store(visible, statuses, scope=scope_json, fx=fx_global,
                             min_margin=args.min_margin, stamp=stamp,
                             notorious_only=args.notorious_only)
-        save_store(store)
-        print(f"(store API alimentado: {OUT_DIR / 'deals_store.json'})")
+        store.update(run_status={0: "done", 1: "failed", 2: "partial"}[run_exit_code(statuses)],
+                     mode="historical" if args.skip_scan else "scan",
+                     diagnostic_limit=args.myp_max_products)
+        if args.skip_scan:
+            store_path = OUT_DIR / f"historical_store_{stamp}.json"
+            save_store(store, path=store_path)
+        else:
+            store_path = OUT_DIR / 'deals_store.json'
+            save_store(store)
+        print(f"(store gravado: {store_path})")
     except Exception as exc:  # pragma: no cover — best-effort
         print(f"[aviso] não consegui alimentar o store da API: "
               f"{type(exc).__name__}: {exc}", file=sys.stderr)
@@ -565,7 +639,7 @@ def main() -> int:
     print(md)
     print(f"(apoio local: {md_path} e {xlsx_path} — a entrega oficial é a "
           f"tabela acima, no chat)")
-    return 0
+    return run_exit_code(statuses)
 
 
 if __name__ == "__main__":

@@ -35,7 +35,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -147,6 +147,9 @@ def status() -> dict:
         "min_margin_pct": store.get("min_margin_pct"),
         "deal_count": store.get("deal_count"),
         "sources": store.get("sources", []),
+        "run_status": store.get("run_status", "unknown"),
+        "mode": store.get("mode", "unknown"),
+        "diagnostic_limit": store.get("diagnostic_limit", 0),
     }
 
 
@@ -200,7 +203,10 @@ class ScanRequest(BaseModel):
     sets: str = Field("quick", description="escopo: códigos canônicos (PRE,SSP) ou profile (quick/full)")
     sources: list[str] = Field(default_factory=lambda: ["myp", "ct"],
                                description="fontes a rodar (headful comc/liga exigem opt-in)")
-    min_margin: float = Field(30.0, description="corte de margem bruta (percent)")
+    min_margin: float = Field(30.0, ge=0, allow_inf_nan=False, description="corte de margem bruta (percent)")
+    ct_provider: Literal["tcgcsv", "pokemontcg", "justtcg"] = "tcgcsv"
+    myp_provider: Literal["auto", "tcgcsv", "pokemontcg"] = "auto"
+    myp_max_products: int = Field(0, ge=0, description="diagnóstico limitado por edição; 0 = todos")
     collect_liga: bool = Field(False, description="dispara coleta Liga headful (cuidado)")
     allow_comc: bool = Field(False, description="permite COMC (HEADFUL — abre Chrome); opt-in obrigatório")
     notorious_only: bool = Field(False)
@@ -222,7 +228,8 @@ def _run_scan_job(job_id: str, req: ScanRequest) -> None:
     cmd = [sys.executable, str(HERE / "run_integrated.py"),
            "--sets", req.sets,
            "--sources", ",".join(s.lower() for s in req.sources),
-           "--min-margin", str(req.min_margin)]
+           "--min-margin", str(req.min_margin), "--ct-provider", req.ct_provider,
+           "--myp-provider", req.myp_provider, "--myp-max-products", str(req.myp_max_products)]
     if req.collect_liga:
         cmd.append("--collect-liga")
     if req.notorious_only:
@@ -237,7 +244,7 @@ def _run_scan_job(job_id: str, req: ScanRequest) -> None:
                                   stderr=subprocess.STDOUT)
         with _JOBS_LOCK:
             _JOBS[job_id].update(
-                status="done" if proc.returncode == 0 else "failed",
+                status={0: "done", 2: "partial"}.get(proc.returncode, "failed"),
                 returncode=proc.returncode, finished=_now(),
                 log=str(log_path))
     except Exception as exc:  # pragma: no cover

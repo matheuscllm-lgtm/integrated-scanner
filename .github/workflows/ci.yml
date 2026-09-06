@@ -10,14 +10,17 @@ permissions:
 
 jobs:
   test:
-    name: pytest + smoke (Python 3.11)
-    runs-on: ubuntu-latest
+    name: pytest + CLI (${{ matrix.os }}, Python 3.12)
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: pip
 
       - name: Install dependencies
@@ -33,9 +36,7 @@ jobs:
       - name: Run pytest
         run: python -m pytest -q
 
-      # Smoke do orquestrador SEM rede e SEM outputs reais: --skip-scan não roda
-      # nenhuma fonte; os REPOS apontam pra caminhos Windows ausentes no runner,
-      # então cada fonte cai no ramo "sem output" e a entrega sai vazia (exit 0).
-      # Exercita imports + pipeline de normalização/entrega de ponta a ponta.
-      - name: Smoke do orquestrador (offline)
-        run: python run_integrated.py --skip-scan --sources myp,ct
+      # Failure/partial runs are exercised with synthetic XLSX fixtures in pytest.
+      # No market collection, prices, logs or artifacts are published by CI.
+      - name: CLI help (offline)
+        run: python run_integrated.py --help
