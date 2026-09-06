@@ -11,6 +11,8 @@ Regras canônicas do operador (2026-06-06):
 """
 from __future__ import annotations
 
+from chat_format import reference_price
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -110,7 +112,7 @@ def build_markdown(deals: list[Deal],
     lines.append("|" + "---|" * len(display_cols))
     for d in deals:
         row = d.to_row()
-        cells = [_md_escape(_fmt(row[c])) for c in UNIFIED_COLUMNS if c not in _LINK_COLS]
+        cells = [reference_price(_fmt(row[c]), row.get("Link TCG")) if c.startswith("Ref TCG") else _md_escape(_fmt(row[c])) for c in UNIFIED_COLUMNS if c not in _LINK_COLS]
         cells.append(_md_links_cell(row.get("Link oferta"), row.get("Link TCG")))
         lines.append("| " + " | ".join(cells) + " |")
     lines.append("")
@@ -166,7 +168,7 @@ def build_cross_source_markdown(cards: list,
                 mark = " ⬅" if s == cheap_src else ""
                 cells.append(f"{d.compra_brl:.2f}{mark}")
         cells.append(f"{cheap_src} (R${cheapest.compra_brl:.2f})")
-        cells.append(f"{cheapest.ref_brl:.2f}" if cheapest.ref_brl else "—")
+        cells.append(reference_price(f"{cheapest.ref_brl:.2f}", cheapest.link_tcg) if cheapest.ref_brl else "—")
         cells.append(f"{cheapest.margem_pct:.1f}")
         cells.append("validar" if c.validar else "")
         cells.append(_md_links_cell(cheapest.link_oferta, cheapest.link_tcg))
