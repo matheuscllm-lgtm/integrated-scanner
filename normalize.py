@@ -49,6 +49,8 @@ UNIFIED_COLUMNS = [
     "Compra (R$)", "Compra (US$)", "FX", "Ref TCG (R$)", "Ref TCG (US$)",
     "Margem bruta %", "Lucro (R$)", "Qtd",
     "Notas", "Link oferta", "Link TCG",
+    "Variante", "Condição", "Idioma", "Fonte preço", "Status referência",
+    "Validação", "Coletado em", "Revisão",
 ]
 
 
@@ -73,6 +75,14 @@ class Deal:
     notas: list[str] = field(default_factory=list)
     link_oferta: str = ""
     link_tcg: str = ""
+    variant: str = ""
+    condition: str = ""
+    language: str = ""
+    price_source: str = ""
+    price_status: str = "unknown"  # real | fallback | unknown
+    validation_status: str = ""
+    scanned_at: str = ""
+    review_reasons: list[str] = field(default_factory=list)
 
     def to_row(self) -> dict[str, Any]:
         return {
@@ -94,6 +104,14 @@ class Deal:
             "Notas": "; ".join(self.notas),
             "Link oferta": self.link_oferta,
             "Link TCG": self.link_tcg,
+            "Variante": self.variant,
+            "Condição": self.condition,
+            "Idioma": self.language,
+            "Fonte preço": self.price_source,
+            "Status referência": self.price_status,
+            "Validação": self.validation_status,
+            "Coletado em": self.scanned_at,
+            "Revisão": "; ".join(self.review_reasons),
         }
 
 
@@ -105,7 +123,7 @@ def _num(value: Any, default: float = 0.0) -> float:
         f = float(value)
     except (TypeError, ValueError):
         return default
-    if math.isnan(f):
+    if not math.isfinite(f):
         return default
     return f
 
@@ -281,6 +299,17 @@ def ct_row_to_deal(row: dict[str, Any], fx_global: float) -> Deal:
     status = _col(row, "Validation Status")
     if status and str(status) != "nan":
         deal.notas.append(f"validação CT: {status}")
+    deal.variant = _clean_str(row.get("Variant"))
+    deal.condition = _clean_str(row.get("Condição"))
+    deal.language = _clean_str(row.get("Idioma"))
+    deal.price_source = _clean_str(row.get("Fonte Preço"))
+    deal.price_status = "real" if deal.price_source in {"tcgcsv", "pokemontcg", "justtcg"} else "unknown"
+    deal.validation_status = _clean_str(status)
+    deal.scanned_at = _clean_str(row.get("Scanned At"))
+    if _clean_str(row.get("Variante Baixa Confiança")).lower() in {"sim", "yes", "true", "1"}:
+        deal.review_reasons.append("variante de baixa confiança na fonte")
+    if deal.validation_status not in {"VALIDATED_REAL", "VALIDATED_MARKUP"}:
+        deal.review_reasons.append("oferta CT sem validação atual: " + (deal.validation_status or "não informada"))
     _flag_notorious(deal)
     return deal
 
@@ -340,9 +369,11 @@ def myp_row_to_deal(row: dict[str, Any], fx_global: float) -> Deal:
     # "fallback (.estat-tcg)" — logo real = qualquer string que NÃO seja fallback
     # (checar por "pokemontcg" sozinho perdia o tcgcsv real, bug corrigido).
     _tcg_src = str(_col(row, "TCG Source") or "").strip().lower()
-    tcg_is_real = ("fallback" not in _tcg_src and "estat" not in _tcg_src) \
+    tcg_is_real = _tcg_src in {"real (tcgcsv)", "real (pokemontcg)", "real (pokemontcg.io)"} \
         if _tcg_src else _num(_col(row, "TCG US$")) > 0
-    ref_usd = ref_brl / fx if fx else 0.0
+    ref_usd = _num(_col(row, "TCG US$")) if tcg_is_real else 0.0
+    if ref_usd > 0 and ref_brl > 0:
+        fx = ref_brl / ref_usd  # preserve the source's actual conversion
     score, note = compute_valorization(rarity, None, ref_usd)
     deal = Deal(
         fonte="MYP",
@@ -363,7 +394,7 @@ def myp_row_to_deal(row: dict[str, Any], fx_global: float) -> Deal:
         link_oferta=str(_col(row, "URL") or ""),
         # v5.11.2 do MYP exporta "TCG URL" (texto plano); XLSX antigo não
         # tem a coluna → fallback de busca por nome (sem duplicar setcodes).
-        link_tcg=_clean_str(_col(row, "TCG URL")) or _myp_tcg_search_fallback(carta),
+        link_tcg=_clean_str(_col(row, "TCG URL")),
     )
     if not tcg_is_real:
         # Nota em PRIMEIRO lugar (insert(0)) — é a ressalva mais importante:
@@ -372,6 +403,16 @@ def myp_row_to_deal(row: dict[str, Any], fx_global: float) -> Deal:
                              "(`.estat-tcg`, estimativa do MYP — NÃO é o preço real "
                              "do TCGplayer); pode estar inflado → validar no Link TCG "
                              "ou re-rodar o MYP local (myp_enrich.py) antes de operar")
+    deal.condition = "NM"  # source exports EN/NM only
+    deal.language = "EN"
+    deal.price_source = _tcg_src
+    deal.price_status = "real" if tcg_is_real else "fallback"
+    deal.scanned_at = _clean_str(row.get("Updated"))
+    deal.variant = _clean_str(row.get("Variant"))
+    if numero and re.search(r"\((\d+)\s*/\s*(\d+)\)", name_raw):
+        n, total = map(int, re.search(r"\((\d+)\s*/\s*(\d+)\)", name_raw).groups())
+        if n > total and rarity == "Comum":
+            deal.review_reasons.append("supranumerário com raridade Comum — validar")
     deal.notas.append(note)
     deal.notas.append("raridade MYP pouco confiável (SIR/HR podem vir 'Comum')")
     sellers = _num(_col(row, "NM Sellers"))
@@ -383,6 +424,7 @@ def myp_row_to_deal(row: dict[str, Any], fx_global: float) -> Deal:
             label = warn.replace("⚠️ ", "")
             value = str(v).replace("⚠️", "").strip()
             deal.notas.append(f"alerta {label}: {value}")
+            deal.review_reasons.append(f"{label}: {value}")
     _flag_notorious(deal)
     return deal
 
@@ -420,6 +462,11 @@ def comc_row_to_deal(row: dict[str, Any], fx_global: float) -> Deal:
     )
     deal.notas.append(note)
     cond = _col(row, "condition")
+    deal.condition = _clean_str(cond)
+    deal.language = _clean_str(row.get("language"))
+    deal.variant = _clean_str(row.get("variant"))
+    deal.price_source = _clean_str(row.get("ref_source"))
+    deal.scanned_at = _clean_str(row.get("scanned_at"))
     if cond and str(cond) != "nan":
         deal.notas.append(f"condição {cond}")
     conf = _num(_col(row, "confidence"))
@@ -455,6 +502,11 @@ def liga_row_to_deal(row: dict[str, Any], fx_global: float) -> Deal:
     )
     deal.notas.append(note)
     deal.notas.append("Liga sem raridade no output — score só por preço-âncora")
+    deal.condition = _clean_str(row.get("condition"))
+    deal.language = _clean_str(row.get("language"))
+    deal.variant = _clean_str(row.get("variant"))
+    deal.validation_status = _clean_str(row.get("status"))
+    deal.price_source = _clean_str(row.get("price_source"))
     _flag_notorious(deal)
     return deal
 
@@ -555,7 +607,9 @@ def read_ct(path: Path, fx_global: float) -> list[Deal]:
 
 def read_myp(path: Path, fx_global: float) -> list[Deal]:
     import pandas as pd
-    df = pd.read_excel(path)
+    with pd.ExcelFile(path) as book:
+        sheet = "All EN Cards" if "All EN Cards" in book.sheet_names else book.sheet_names[0]
+        df = pd.read_excel(book, sheet_name=sheet)
     return [myp_row_to_deal(row, fx_global) for row in df.to_dict("records")]
 
 
@@ -575,8 +629,11 @@ def read_liga(path: Path, fx_global: float) -> list[Deal]:
     POR FONTE; o integrado respeita o veredito dela."""
     import json
     rows = json.loads(path.read_text(encoding="utf-8"))
-    return [liga_row_to_deal(row, fx_global) for row in rows
-            if row.get("status") == "approved"]
+    deals = [liga_row_to_deal(row, fx_global) for row in rows]
+    for deal in deals:
+        if deal.validation_status != "approved":
+            deal.review_reasons.append("rejeitada pela Liga: " + (deal.validation_status or "sem status"))
+    return deals
 
 
 def infer_fx_from_ct(repo: Path = REPOS["ct"]) -> Optional[float]:

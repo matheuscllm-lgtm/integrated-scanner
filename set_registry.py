@@ -85,8 +85,14 @@ _REGISTRY: list[SetEntry] = [
     SetEntry("DRI", "Destined Rivals",      "SV", "DRI", "Destined Rivals", "dri", (COMC_ERA_RECENT, "DRI")),
     SetEntry("TEF", "Temporal Forces",      "SV", "TEF", "Temporal Forces", "tef", (COMC_ERA_RECENT, "TEF")),
     SetEntry("PAR", "Paradox Rift",         "SV", "PAR", "Paradox Rift",    "par", (COMC_ERA_RECENT, "PAR")),
-    SetEntry("OBF", "Obsidian Flames",      "SV", "OBF", "Obsidian Flames", "sv3", (COMC_ERA_RECENT, "OBF")),
-    SetEntry("PAL", "Paldea Evolved",       "SV", "PAL", "Paldea Evolved",  "sv2", (COMC_ERA_RECENT, "PAL")),
+    SetEntry("OBF", "Obsidian Flames",      "SV", "OBF", "Obsidian Flames", "obf", (COMC_ERA_RECENT, "OBF")),
+    SetEntry("PAL", "Paldea Evolved",       "SV", "PAL", "Paldea Evolved",  "pal", (COMC_ERA_RECENT, "PAL")),
+    # CT /expansions verified 2026-09-06; MYP group 2 substrings.
+    SetEntry("BLK", "Black Bolt", "SV", None, "Black Bolt", "blk", None),
+    SetEntry("WHT", "White Flare", "SV", None, "White Flare", "wht", None),
+    SetEntry("BRS", "Brilliant Stars", "SWSH", None, "Brilliant Stars", "brs", None),
+    SetEntry("FST", "Fusion Strike", "SWSH", None, "Fusion Strike", "fst", None),
+    SetEntry("EVS", "Evolving Skies", "SWSH", None, "Evolving Skies", "evs", None),
     # ── Sword & Shield: os 4 sets mais recentes da era SWSH (fecham os "20").
     #   CT: código VERIFICADO via API /expansions (lorg/sit/crz/astr).
     #   Liga: LOR e STB constam no alias map de normalização; CRZ/ASR ausentes → None.
@@ -114,7 +120,9 @@ _BY_CANON: dict[str, SetEntry] = {e.canonical: e for e in _REGISTRY}
 # A ORDEM de quick == ordem das constantes antigas (CT_QUICK_SETS / MYP_QUICK).
 _PROFILE_QUICK = ["PRE", "SSP", "JTG", "SCR", "TWM", "SFA", "PAF", "MEW",
                   "ASH", "PFO", "CHR"]
-PROFILES = {"quick", "full"}
+_PROFILE_GROUP2 = ["PAF", "PAR", "OBF", "MEW", "PAL", "BLK", "WHT",
+                   "CRZ", "SIT", "LOR", "ASR", "BRS", "FST", "EVS"]
+PROFILES = {"quick", "full", "group2"}
 
 FULL = "__FULL__"  # sentinela retornado por resolve_scope("full")
 
@@ -177,6 +185,8 @@ def resolve_scope(spec: str) -> object:
         return FULL
     if s.lower() == "quick":
         return [_BY_CANON[c] for c in _PROFILE_QUICK]
+    if s.lower() == "group2":
+        return [_BY_CANON[c] for c in _PROFILE_GROUP2]
     codes = [c.strip().upper() for c in s.split(",") if c.strip()]
     if not codes:
         raise UnknownSetError("escopo vazio")

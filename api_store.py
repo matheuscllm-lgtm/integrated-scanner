@@ -39,6 +39,7 @@ def build_store(deals: list, statuses: list, *, scope: Any, fx: float,
                 notorious_only: bool = False) -> dict:
     """Monta o dict do store a partir dos objetos do pipeline (Deal/SourceStatus
     são dataclasses → asdict serializa tudo, inclusive a lista de notas)."""
+    from delivery import bucket_for
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_utc": _now_utc_iso(),
@@ -49,7 +50,7 @@ def build_store(deals: list, statuses: list, *, scope: Any, fx: float,
         "notorious_only": bool(notorious_only),
         "deal_count": len(deals),
         "sources": [asdict(s) for s in statuses],
-        "deals": [asdict(d) for d in deals],
+        "deals": [dict(asdict(d), bucket=bucket_for(d, min_margin)) for d in deals],
     }
 
 

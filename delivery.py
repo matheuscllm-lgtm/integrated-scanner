@@ -16,6 +16,8 @@ from chat_format import reference_price
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+import math
+from urllib.parse import quote, urlsplit
 
 from normalize import Deal, UNIFIED_COLUMNS
 
@@ -32,12 +34,16 @@ class SourceStatus:
     deals_kept: int = 0         # linhas que passaram o corte unificado
     duration_s: Optional[float] = None
     output_path: str = ""
+    collected_at: str = ""
+    mode: str = "scan"
 
 
 def filter_deals(deals: list[Deal],
                  min_margin_pct: float = MIN_MARGIN_PCT_DEFAULT,
                  notorious_only: bool = False) -> list[Deal]:
-    kept = [d for d in deals if d.margem_pct >= min_margin_pct]
+    kept = [d for d in deals if d.margem_pct >= min_margin_pct
+            and d.compra_brl > 0 and d.ref_brl > 0
+            and math.isfinite(d.margem_pct)]
     if notorious_only:
         kept = [d for d in kept if d.notorio]
     kept.sort(key=lambda d: d.margem_pct, reverse=True)
@@ -45,7 +51,7 @@ def filter_deals(deals: list[Deal],
 
 
 def _md_escape(text: str) -> str:
-    return str(text).replace("|", "\\|").replace("\n", " ")
+    return str(text).replace("|", "\\|").replace("\n", " ").replace("\r", " ")
 
 
 def _fmt(value) -> str:
@@ -66,10 +72,31 @@ def _md_links_cell(link_oferta, link_tcg) -> str:
     of = "" if link_oferta is None else str(link_oferta).strip()
     tc = "" if link_tcg is None else str(link_tcg).strip()
     if of.startswith("http"):
-        parts.append(f"[oferta]({of})")
+        parts.append(f"[oferta]({quote(of, safe='%/?&=:+,*')})")
     if tc.startswith("http"):
-        parts.append(f"[TCG]({tc})")
+        parts.append(f"[TCG]({quote(tc, safe='%/?&=:+,*')})")
     return " · ".join(parts) if parts else "—"
+
+
+def bucket_for(deal: Deal, minimum: float = 30.0) -> str:
+    if deal.validation_status in {"STALE", "API_ERROR", "PRICE_CHANGED", "rejected"}:
+        return "Rejeitados / sem referência"
+    if deal.compra_brl <= 0 or deal.ref_brl <= 0:
+        return "Rejeitados / sem referência"
+    if deal.price_status == "fallback":
+        return "Fallback — margem estimada, validar"
+    if deal.margem_pct < minimum:
+        return "Abaixo do corte — diagnóstico"
+    if deal.review_reasons or deal.price_status != "real" or not deal.link_tcg \
+            or "/search" in deal.link_tcg:
+        return "Validar manualmente"
+    return "Deals limpos — referência real"
+
+
+def supporting_url(deal: Deal) -> str:
+    if deal.price_status == "fallback":
+        return deal.link_oferta  # estimated price is from MYP's own page
+    return "" if "/search" in deal.link_tcg else deal.link_tcg
 
 
 def build_markdown(deals: list[Deal],
@@ -90,34 +117,63 @@ def build_markdown(deals: list[Deal],
         out = Path(s.output_path).name if s.output_path else "—"
         lines.append(
             f"| {s.source} | {s.status} | {s.deals_raw} | {s.deals_kept} "
-            f"| {dur} | {out} | {_md_escape(s.detail) or '—'} |")
+            f"| {dur} | {_md_escape(out)} | {_md_escape('; '.join(filter(None, [s.detail, s.collected_at, s.mode]))) or '—'} |")
     lines.append("")
     lines.append(
         f"Corte aplicado: **margem bruta ≥ {min_margin_pct:.0f}%** "
         f"(base = preço de compra; zero taxas — convenção unificada, ver CLAUDE.md). "
-        f"FX global usado p/ fontes sem câmbio próprio: **{fx_global:.3f}**."
+        + (f"FX global usado p/ fontes sem câmbio próprio: **{fx_global:.3f}**." if fx_global > 0 else "FX global indisponível; valores da própria fonte são preservados.")
         + (" Filtro extra: **só Pokémon notórios**." if notorious_only else ""))
     lines.append("")
 
-    # ── Tabela completa ───────────────────────────────────────────────
-    lines.append(f"## Deals ({len(deals)} linhas, ordenado por margem bruta desc)")
+    lines.append("Referência = preço de mercado da fonte; diferença e margem são brutas, sem taxas.")
+    lines.append("Valores de dumps TCGCSV não são cotações em tempo real; data do dump só quando informada pela fonte.")
+    real = sum(d.price_status == "real" for d in deals)
+    fallback = sum(d.price_status == "fallback" for d in deals)
+    lines.append(f"**Cobertura de preço TCG real:** {real}/{len(deals)} linhas; "
+                 f"fallback: {fallback}; desconhecida: {len(deals)-real-fallback}.")
     lines.append("")
     if not deals:
-        lines.append("_Nenhum deal passou o corte._")
+        lines.append("_Nenhuma linha disponível nesta execução. Consulte o status das fontes acima; falha não significa ausência de oportunidades._")
         return "\n".join(lines) + "\n"
 
-    # Header: colunas não-link + 1 coluna `Links` combinada no fim (modelo MYP).
-    display_cols = [c for c in UNIFIED_COLUMNS if c not in _LINK_COLS] + ["Links"]
-    lines.append("| " + " | ".join(display_cols) + " |")
-    lines.append("|" + "---|" * len(display_cols))
-    for d in deals:
-        row = d.to_row()
-        cells = [reference_price(_fmt(row[c]), row.get("Link TCG")) if c.startswith("Ref TCG") else _md_escape(_fmt(row[c])) for c in UNIFIED_COLUMNS if c not in _LINK_COLS]
-        cells.append(_md_links_cell(row.get("Link oferta"), row.get("Link TCG")))
-        lines.append("| " + " | ".join(cells) + " |")
-    lines.append("")
-    lines.append("_Decisão de compra é do operador — o scanner ranqueia por "
-                 "margem e flagea; não recomenda compra._")
+    buckets = ["Deals limpos — referência real", "Validar manualmente",
+               "Fallback — margem estimada, validar", "Rejeitados / sem referência",
+               "Abaixo do corte — diagnóstico"]
+    for bucket in buckets:
+        rows = sorted((d for d in deals if bucket_for(d, min_margin_pct) == bucket),
+                      key=lambda d: d.margem_pct, reverse=True)
+        if not rows:
+            continue
+        lines += [f"## {bucket} ({len(rows)})", "",
+                  "| # | Fonte | Margem % | Compra R$ | TCG US$ | TCG R$ | Dif R$ | Carta | Set | Raridade | Cond | Qtd | Flags | Links |",
+                  "|---|---|---:|---:|---:|---:|---:|---:|---|---|---|---:|---|---|"]
+        for i, d in enumerate(rows, 1):
+            number = d.numero.strip()
+            label = d.carta if not number or number in d.carta else f"{d.carta} {number}"
+            has_prices = d.compra_brl > 0 and d.ref_brl > 0
+            flags = list(d.review_reasons)
+            if d.variant:
+                flags.append("variante: " + d.variant)
+            if d.price_source:
+                flags.append("fonte: " + d.price_source)
+            if d.scanned_at:
+                flags.append("coleta: " + d.scanned_at)
+            if d.notorio:
+                flags.append(d.notorio)
+            flags.extend(d.notas)
+            cells = [str(i), _md_escape(d.fonte),
+                     f"{d.margem_pct:.1f}%" if has_prices else "—",
+                     f"{d.compra_brl:.2f}" if d.compra_brl > 0 else "—",
+                     reference_price(f"{d.ref_usd:.2f}", supporting_url(d)) if d.ref_usd > 0 else "—",
+                     reference_price(f"{d.ref_brl:.2f}", supporting_url(d)) if d.ref_brl > 0 else "—",
+                     f"{d.ref_brl-d.compra_brl:.2f}" if has_prices else "—",
+                     _md_escape(label), _md_escape(d.set_name), _md_escape(d.raridade),
+                     _md_escape(d.condition or "—"), str(d.qtd) if d.qtd is not None else "—",
+                     _md_escape("; ".join(dict.fromkeys(flags))) or "—",
+                     _md_links_cell(d.link_oferta, d.link_tcg)]
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
     return "\n".join(lines) + "\n"
 
 
@@ -133,20 +189,17 @@ def build_cross_source_markdown(cards: list,
 
     lines: list[str] = ["## 🔀 Mesma carta em ≥2 fontes — preço lado a lado", ""]
     if not cards:
-        lines.append("_Nenhuma carta passou o corte em 2+ fontes neste run "
-                     "(nada pra comparar lado a lado)._")
+        lines.append("_Nenhuma correspondência compatível entre duas ou mais fontes nesta execução._")
         return "\n".join(lines) + "\n"
 
     lines.append(
-        f"Cartas que passaram o corte (**margem ≥ {min_margin_pct:.0f}%**) em "
-        f"**2+ fontes**, com o preço de compra de cada fonte lado a lado (⬅ = mais "
+        f"Cartas coletadas em **2+ fontes**, com o preço de compra de cada fonte lado a lado (⬅ = mais "
         f"barata). Casamento por **set canônico + número de coleção** (âncora "
         f"forte; nomes divergentes no mesmo número = cartas diferentes, são "
         f"separadas, não viram uma linha enganosa). **`validar`** = casado por "
         f"nome (fonte sem número, ex. Liga) → confira a versão exata. Limitação "
-        f"honesta: compara só "
-        f"cartas que já são deal ≥ corte em cada fonte (um preço menor PORÉM abaixo "
-        f"do corte noutra fonte não aparece). A margem exibida é a da compra mais "
+        f"limitada às linhas coletadas: inclui também preços abaixo "
+        f"do corte, sem consultar automaticamente todas as lojas. A margem exibida é a da compra mais "
         f"barata. O integrado não decide compra.")
     lines.append("")
 
@@ -165,10 +218,10 @@ def build_cross_source_markdown(cards: list,
             if d is None:
                 cells.append("—")
             else:
-                mark = " ⬅" if s == cheap_src else ""
+                mark = " ⬅" if s == cheap_src and not c.validar else ""
                 cells.append(f"{d.compra_brl:.2f}{mark}")
-        cells.append(f"{cheap_src} (R${cheapest.compra_brl:.2f})")
-        cells.append(reference_price(f"{cheapest.ref_brl:.2f}", cheapest.link_tcg) if cheapest.ref_brl else "—")
+        cells.append("validar correspondência" if c.validar else f"{cheap_src} (R${cheapest.compra_brl:.2f})")
+        cells.append(reference_price(f"{cheapest.ref_brl:.2f}", supporting_url(cheapest)) if cheapest.ref_brl else "—")
         cells.append(f"{cheapest.margem_pct:.1f}")
         cells.append("validar" if c.validar else "")
         cells.append(_md_links_cell(cheapest.link_oferta, cheapest.link_tcg))

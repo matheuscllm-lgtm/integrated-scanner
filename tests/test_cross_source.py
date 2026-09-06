@@ -25,7 +25,8 @@ def _deal(fonte, carta, set_name, numero="", compra_brl=100.0, ref_brl=150.0,
           margem_pct=50.0, link_oferta="", link_tcg=""):
     return Deal(fonte=fonte, carta=carta, set_name=set_name, numero=numero,
                 compra_brl=compra_brl, ref_brl=ref_brl, margem_pct=margem_pct,
-                link_oferta=link_oferta, link_tcg=link_tcg)
+                link_oferta=link_oferta, link_tcg=link_tcg,
+                variant="holofoil", condition="NM", language="EN", price_status="real")
 
 
 # ── normalização de número ──────────────────────────────────────────────────
@@ -238,7 +239,7 @@ def test_sorted_by_cheapest_buy_margin_desc():
 
 # ── tabela de entrega ───────────────────────────────────────────────────────
 def test_markdown_empty_when_no_cross_source():
-    assert "Nenhuma carta passou o corte em 2+ fontes" in build_cross_source_markdown([])
+    assert "Nenhuma correspondência compatível" in build_cross_source_markdown([])
 
 
 def test_markdown_lays_prices_side_by_side_and_marks_cheapest():
