@@ -131,6 +131,9 @@ def test_source_commands_use_fresh_state_and_selected_provider(monkeypatch, tmp_
     assert '--no-cache' in first
     run.scan_myp(resolve_scope('PRE'), 'RUN_C', 60, 'tcgcsv', 2)
     assert '--resume' not in calls[-1] and '--max-products' in calls[-1]
+    assert calls[-1][calls[-1].index('--delay')+1] == '3.0'
+    run.scan_myp(resolve_scope('PRE'), 'RUN_D', 60, 'tcgcsv', 2, 4.0)
+    assert calls[-1][calls[-1].index('--delay')+1] == '4.0'
 
 
 def test_group2_verified_codes_cover_all_requested_editions():

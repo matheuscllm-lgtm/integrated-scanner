@@ -88,7 +88,7 @@ VENV_PY = {src: _venv_python(repo) for src, repo in REPOS.items()}
 # Timeouts (segundos) por fonte × profile — generosos mas finitos.
 TIMEOUTS = {
     "ct":   {"quick": 45 * 60, "full": 4 * 3600},
-    "myp":  {"quick": 2 * 3600, "full": 8 * 3600},   # ~7 min/edição no MYP
+    "myp":  {"quick": 2 * 3600, "full": 8 * 3600},
     "comc": {"quick": 30 * 60, "full": 75 * 60},     # ~8 min/era + margem
     "liga": {"quick": 15 * 60, "full": 30 * 60},
 }
@@ -97,6 +97,17 @@ TIMEOUTS = {
 # passo à parte: se estourar, a Liga vira "timeout (coleta)" mas o run continua
 # com as outras fontes (isolamento — uma fonte frágil não derruba a entrega).
 LIGA_COLLECT_TIMEOUT = 90 * 60
+
+
+def source_timeout(source: str, scope: object, override: int | None = None) -> int:
+    """Give larger MYP groups time to finish while preserving explicit limits."""
+    if override is not None:
+        return override
+    budget = TIMEOUTS[source]["full" if is_full(scope) else "quick"]
+    if source == "myp" and not is_full(scope):
+        editions, _ = to_myp_editions(scope)
+        budget = max(budget, len(editions) * 30 * 60)
+    return budget
 
 
 def _skip_note(skipped: list[str], reason: str) -> str:
@@ -244,13 +255,13 @@ def scan_ct(scope: object, stamp: str, timeout_s: int, provider: str = "tcgcsv")
 
 
 def scan_myp(scope: object, stamp: str, timeout_s: int, provider: str = "auto",
-             max_products: int = 0) -> tuple[str, str, float, Path | None]:
+             max_products: int = 0, delay_s: float = 3.0) -> tuple[str, str, float, Path | None]:
     repo = REPOS["myp"]
     out = repo / "results" / f"integrated_{stamp}.xlsx"
     cmd = [str(VENV_PY["myp"]), str(repo / "myp_arbitrage_scanner.py"),
            # THRESHOLD EM PERCENT INTEIRO (30 = 30%) — convenção do MYP!
            "--threshold", "30", "--min-price", "50", "-o", str(out),
-           "--tcg-source", provider]
+           "--tcg-source", provider, "--delay", str(delay_s)]
     if max_products:
         cmd += ["--max-products", str(max_products)]
     note = ""
@@ -433,6 +444,8 @@ def main() -> int:
     ap.add_argument("--myp-provider", choices=["auto", "tcgcsv", "pokemontcg"], default="auto")
     ap.add_argument("--myp-max-products", type=int, default=0,
                     help="diagnóstico: limite de produtos por edição, 0 = todos")
+    ap.add_argument("--myp-delay", type=float, default=3.0,
+                    help="intervalo entre consultas MYP em segundos (default: 3); Retry-After continua sendo respeitado")
     ap.add_argument("--ct-output", type=Path, help="arquivo explícito para releitura histórica (--skip-scan)")
     ap.add_argument("--myp-output", type=Path, help="arquivo explícito para releitura histórica (--skip-scan)")
     args = ap.parse_args()
@@ -445,6 +458,8 @@ def main() -> int:
         ap.error("--fx deve ser finito e positivo")
     if args.myp_max_products < 0 or (args.timeout is not None and args.timeout <= 0):
         ap.error("limite de produtos deve ser não negativo; timeout deve ser positivo")
+    if not math.isfinite(args.myp_delay) or args.myp_delay <= 0:
+        ap.error("--myp-delay deve ser finito e positivo")
     if not args.skip_scan and (args.ct_output or args.myp_output or args.liga_report):
         ap.error("arquivos explícitos só podem ser usados com --skip-scan (histórico)")
     bad = [s for s in sources if s not in REPOS]
@@ -459,8 +474,6 @@ def main() -> int:
         scope = resolve_scope(scope_spec)
     except UnknownSetError as exc:
         ap.error(str(exc))
-    # quick/full mapeiam pros timeouts existentes; escopo livre usa o de "quick"
-    timeout_profile = "full" if is_full(scope) else "quick"
     scope_label = ("full (catálogo inteiro)" if is_full(scope)
                    else ", ".join(e.canonical for e in scope))
     print(f"Escopo de sets: {scope_label}")
@@ -478,12 +491,12 @@ def main() -> int:
     if args.skip_scan and args.collect_liga:
         print("[aviso] --collect-liga é IGNORADO em --skip-scan (a fase de scan "
               "não roda; nenhuma coleta é disparada).")
-    # Escopo livre grande herda o timeout de "quick" — avisa pra usar --timeout.
+    # Mostrar o orçamento ampliado do MYP em escopos grandes.
     if not is_full(scope) and not args.skip_scan and not args.timeout \
             and len(scope) > len(resolve_scope("quick")):
-        print(f"[aviso] escopo com {len(scope)} sets usa o timeout de 'quick' por "
-              f"fonte (MYP {TIMEOUTS['myp']['quick']//60} min etc.); escopos "
-              f"grandes podem estourar — considere --timeout <segundos>.")
+        print(f"[aviso] escopo com {len(scope)} sets: limite MYP "
+              f"{source_timeout('myp', scope)//60} min; as demais fontes mantêm "
+              f"seus limites. Ajuste --timeout <segundos> se necessário.")
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f") + "_" + uuid.uuid4().hex[:6]
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -500,12 +513,13 @@ def main() -> int:
     for src in sources:
         if args.skip_scan:
             continue
-        timeout_s = args.timeout or TIMEOUTS[src][timeout_profile]
+        timeout_s = source_timeout(src, scope, args.timeout)
         try:
             if src == "ct":
                 st, det, dur, out = scan_ct(scope, stamp, timeout_s, args.ct_provider)
             elif src == "myp":
-                st, det, dur, out = scan_myp(scope, stamp, timeout_s, args.myp_provider, args.myp_max_products)
+                st, det, dur, out = scan_myp(scope, stamp, timeout_s, args.myp_provider,
+                                            args.myp_max_products, args.myp_delay)
             elif src == "comc":
                 st, det, dur, out = scan_comc(scope, stamp, timeout_s)
             else:
@@ -624,7 +638,7 @@ def main() -> int:
                             notorious_only=args.notorious_only)
         store.update(run_status={0: "done", 1: "failed", 2: "partial"}[run_exit_code(statuses)],
                      mode="historical" if args.skip_scan else "scan",
-                     diagnostic_limit=args.myp_max_products)
+                     diagnostic_limit=args.myp_max_products, myp_delay_s=args.myp_delay)
         if args.skip_scan:
             store_path = OUT_DIR / f"historical_store_{stamp}.json"
             save_store(store, path=store_path)
