@@ -136,3 +136,8 @@ CI verifica Linux e Windows com fixtures sintéticas; nunca publica preços ou l
 de mercado, artifacts de coleta, segredos ou resultados de scans no GitHub.
 `outputs/` permanece ignorado. Handoffs antigos são contexto histórico;
 este manual e DELIVERY_CHAT descrevem o comportamento vigente.
+
+**Sem check-ins automáticos de PR** (operador, 2026-09-12): depois de abrir um PR, a sessão
+reporta o link no chat e **para** — sem `subscribe_pr_activity`, sem check-in agendado
+(`send_later`/Routine/cron), sem poll de CI/review. Assinatura de PR criada pelo harness deve
+ser cancelada. Exceção única: pedido explícito do operador ("acompanha esse PR").
