@@ -413,6 +413,15 @@ def myp_row_to_deal(row: dict[str, Any], fx_global: float) -> Deal:
         n, total = map(int, re.search(r"\((\d+)\s*/\s*(\d+)\)", name_raw).groups())
         if n > total and rarity == "Comum":
             deal.review_reasons.append("supranumerário com raridade Comum — validar")
+    # MYP v5.20 (pendencias#10): "Match Status" = REVIEW quando o join tcgcsv
+    # não identificou UM produto/acabamento (variante Poké Ball/Master Ball sem
+    # nome exato, acabamento da oferta sem subtype no produto, denominador
+    # divergente). O preço é real, mas da versão mais barata (conservador) —
+    # a variante precisa de conferência. XLSX antigo sem a coluna → nada muda.
+    if _clean_str(_col(row, "Match Status")).upper() == "REVIEW":
+        motivo = _clean_str(_col(row, "Match Reason"))
+        deal.review_reasons.append(
+            "variante TCG a validar" + (f": {motivo}" if motivo else ""))
     deal.notas.append(note)
     deal.notas.append("raridade MYP pouco confiável (SIR/HR podem vir 'Comum')")
     sellers = _num(_col(row, "NM Sellers"))

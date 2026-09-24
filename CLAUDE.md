@@ -79,6 +79,8 @@ Todas as linhas lidas permanecem na entrega, separadas em:
 - Abaixo do corte, apenas diagnóstico.
 
 O leitor MYP usa `All EN Cards`, evitando perder as linhas abaixo do corte.
+Linha MYP com `Match Status` = `REVIEW` (MYP v5.20: variante/acabamento TCG sem
+match único, referência da versão mais barata) vai para Validar manualmente.
 CT preserva variante, idioma, condição, procedência, horário e validação.
 Linhas CT não validadas não viram deals limpos por passar apenas no corte numérico.
 

@@ -239,3 +239,24 @@ def test_comc_run_summaries(tmp_path):
     assert s["recent"]["generated_utc"] == "20260610T184632Z"
     # diretório sem nenhum sidecar → dict vazio
     assert comc_run_summaries(tmp_path / "nao_existe") == {}
+
+
+def test_myp_match_review_goes_to_manual_validation():
+    # MYP v5.20 (pendencias#10): join tcgcsv sem produto/acabamento único →
+    # "Match Status" = REVIEW. Preço real mas da versão mais barata: a linha
+    # vai pro balde "Validar manualmente" com o motivo, nunca pro limpo.
+    from delivery import bucket_for
+    base = dict(MYP_ROW, **{"TCG Source": "real (tcgcsv)", "TCG US$": 86.0,
+                            "TCG URL": "https://www.tcgplayer.com/product/610414"})
+    base.pop("⚠️ COLLECTOR#")
+    review = dict(base, **{"Match Status": "REVIEW", "Match Reason":
+                           "3 produtos TCG com o nº 059/131: nenhum com o nome exato"})
+    d = myp_row_to_deal(review, FX)
+    assert any(r.startswith("variante TCG a validar: 3 produtos") for r in d.review_reasons), \
+        d.review_reasons
+    assert bucket_for(d) == "Validar manualmente"
+    # VERIFIED e XLSX antigo (sem a coluna) seguem limpos
+    for row in (dict(base, **{"Match Status": "VERIFIED"}), base):
+        d = myp_row_to_deal(row, FX)
+        assert not any("variante TCG" in r for r in d.review_reasons), d.review_reasons
+        assert bucket_for(d) == "Deals limpos — referência real", bucket_for(d)
